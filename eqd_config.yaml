@@ -1,0 +1,95 @@
+# EQD-AI Configuration
+# API keys are NEVER stored here — use .env file
+
+# ── PROVIDERS ─────────────────────────────────────────────────────
+providers:
+  openai:
+    type: openai_compatible
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+
+  # Anthropic via OpenAI-compatible endpoint (for embeddings workaround)
+  anthropic_oai:
+    type: openai_compatible
+    api_key_env: ANTHROPIC_API_KEY
+    base_url: https://api.anthropic.com/v1/
+
+  ollama:
+    type: openai_compatible
+    api_key_env: OLLAMA_API_KEY
+    base_url: http://localhost:11434/v1
+
+  lmstudio:
+    type: openai_compatible
+    api_key_env: LMSTUDIO_API_KEY
+    base_url: http://localhost:1234/v1
+
+# ── NAMED MODELS ──────────────────────────────────────────────────
+models:
+  gpt4o_mini:
+    provider: openai
+    model_id: gpt-4o-mini
+
+  claude_haiku:
+    provider: anthropic
+    model_id: claude-haiku-4-5-20251001
+
+  claude_sonnet:
+    provider: anthropic
+    model_id: claude-sonnet-4-5-20250929
+
+  llama_local:
+    provider: ollama
+    model_id: llama3.1:70b
+
+  embed_openai:
+    provider: openai
+    model_id: text-embedding-3-small
+
+# ── AGENTS ────────────────────────────────────────────────────────
+# TEST CONFIG: All LLM agents on Haiku 4.5 (cheapest)
+agents:
+  coder_agent:
+    model: claude_haiku
+    temperature: 0.2
+    max_tokens: 4000
+
+  codebook_comparator:
+    model: claude_haiku
+    temperature: 0.1
+    max_tokens: 2000
+
+  synthesizer_agent:
+    model: claude_sonnet
+    temperature: 0.2
+    max_tokens: 8000
+
+  category_agent:
+    model: claude_sonnet
+    temperature: 0.2
+    max_tokens: 8000
+
+  embedding:
+    model: embed_openai
+
+# ── STUDY ─────────────────────────────────────────────────────────
+study:
+  name: dying_light_beast_test
+  embedding_model_locked: false
+
+# ── PROCESSING ────────────────────────────────────────────────────
+processing:
+  batch_size: 10
+  segments_per_coder_call: 2    # segments per LLM call (1 = original behavior)
+  its_saturation_threshold: 0.02
+  its_consecutive_batches: 3
+  similarity_prefilter_k: 5
+  merge_conflict_similarity_threshold: 0.75
+  auto_new_threshold: 0.5
+  auto_merge_threshold: 0.72
+  category_merge_threshold: 0.85
+  coherence_threshold: 1.0
