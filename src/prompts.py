@@ -391,7 +391,7 @@ ERROR 2 — Category-level grouping (too broad):
 --- END EXAMPLES ---
 
 OUTPUT: Return a SynthesisOutput with:
-- reasoning: brief bullet-point notes for each CoT step (max 200 words total). Do NOT write prose, do NOT enumerate every IC individually. One line per cluster group, one line per merge/split decision. Example format: "• Combat: combat_sluggish + hit_detection_broken + weapon_durability → 'Combat Responsiveness Issues' | • Traversal: parkour_unresponsive + map_design_empty + fast_travel_missing → 'Traversal Frustrations' | • REDUNDANCY: kept separate — same domain, different phenomena | • COVERAGE: all 18 ICs assigned"
+- reasoning: brief chain-of-thought bullet-point notes for each step (max 200 words total). Do NOT write prose, do NOT enumerate every IC individually. One line per cluster group, one line per merge/split decision. Example format: "• Combat: combat_sluggish + hit_detection_broken + weapon_durability → 'Combat Responsiveness Issues' | • Traversal: parkour_unresponsive + map_design_empty + fast_travel_missing → 'Traversal Frustrations' | • REDUNDANCY: kept separate — same domain, different phenomena | • COVERAGE: all 18 ICs assigned"
 - themes: list of ThemeProposal objects. Each ThemeProposal needs:
   - name: theme name (3-6 words, descriptive label, NOT a sentence)
   - definition: interpretive definition (what this pattern means)
