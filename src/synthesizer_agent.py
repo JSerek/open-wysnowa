@@ -227,6 +227,11 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> SynthesisOutput:
         """Instructor-patched LLM call for initial synthesis."""
+        # Extended output beta: Claude models support up to 128k output tokens with this header.
+        # Without it, the API caps at 8,192 regardless of max_tokens value.
+        extra = {}
+        if "claude" in model_id.lower():
+            extra["betas"] = ["output-128k-2025-02-19"]
         return client.chat.completions.create(
             model=model_id,
             response_model=SynthesisOutput,
@@ -236,6 +241,7 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **extra,
         )
 
     @retry(
@@ -253,6 +259,9 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> RevisionOutput:
         """Instructor-patched LLM call for theme revision."""
+        extra = {}
+        if "claude" in model_id.lower():
+            extra["betas"] = ["output-128k-2025-02-19"]
         return client.chat.completions.create(
             model=model_id,
             response_model=RevisionOutput,
@@ -262,4 +271,5 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **extra,
         )
