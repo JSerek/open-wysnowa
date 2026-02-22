@@ -28,9 +28,16 @@ class TestSynthesizerSystemPrompt:
         prompt = build_synthesizer_system_prompt()
         assert "NOT extract" in prompt or "not re-coding" in prompt.lower()
 
-    def test_contains_fewer_is_better_principle(self):
+    def test_contains_specificity_over_parsimony_principle(self):
+        # P1: replaced "FEWER IS BETTER" with specificity guidance
         prompt = build_synthesizer_system_prompt()
-        assert "FEWER IS BETTER" in prompt
+        assert "SPECIFICITY OVER PARSIMONY" in prompt
+        assert "FEWER IS BETTER" not in prompt  # old principle removed
+
+    def test_prompt_targets_mid_level_themes(self):
+        prompt = build_synthesizer_system_prompt()
+        assert "3" in prompt and "6" in prompt  # 3-6 ICs per theme guidance
+        assert "categor" in prompt.lower()       # reference to category layer above
 
     def test_contains_chain_of_thought_steps(self):
         prompt = build_synthesizer_system_prompt()
