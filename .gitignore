@@ -1,8 +1,15 @@
+# Secrets
 .env
+*.env.*
+
+# Data files (potentially sensitive / large)
+*.csv
+*.db
+
+# Python artifacts
 __pycache__/
 *.pyc
-*.db
-*.json
+*.pyo
 .pytest_cache/
 htmlcov/
 *.egg-info/
@@ -10,4 +17,10 @@ dist/
 build/
 .mypy_cache/
 .venv/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Results / exports (generated, not source)
+*.json
