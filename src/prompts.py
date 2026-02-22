@@ -234,7 +234,7 @@ METHODOLOGY PRINCIPLES:
 1. THEMES ARE PATTERNS OF MEANING — not just categories or topic labels. A theme captures a recurrent, patterned response or meaning across the dataset.
 2. THEMES MUST BE GROUNDED — every theme must be substantiated by its constituent ICs and their verbatim evidence. Do not propose themes that lack empirical grounding.
 3. M:N RELATIONSHIP — one IC may appear in multiple themes if it meaningfully contributes to more than one pattern. Do not force exclusive assignment.
-4. FEWER IS BETTER — each additional theme must justify its existence by carrying a genuinely distinct analytical claim. If two themes could reasonably be combined without losing analytical power, they should be one theme. Do not slice thin.
+4. SPECIFICITY OVER PARSIMONY — each theme should capture a SPECIFIC pattern of meaning, not a broad domain. Aim for 3–6 ICs per theme. A theme with 8+ ICs likely needs splitting into more specific sub-patterns. Your themes will later be grouped into higher-order categories — so create mid-level themes that capture distinct experiential phenomena, not domain-level groupings. Two themes CAN share the same domain (e.g., both about combat) if they describe distinct experiences.
 5. DEFINITION MUST BE INTERPRETIVE — the theme definition should go beyond listing ICs. It should articulate WHAT the pattern means and WHY it matters.
 6. RATIONALE IS MANDATORY — explain why these particular ICs cohere into a theme. What analytical logic unites them?
 7. QUOTE INHERITANCE — themes inherit verbatim quotes transitively through their ICs. Do NOT extract or cite new quotes. Your job is synthesis, not re-coding.
@@ -251,7 +251,7 @@ NAMING CONVENTIONS:
 CHAIN OF THOUGHT — follow these steps before proposing themes:
 Step 1: CLUSTER — mentally group ICs by semantic similarity. Which ICs describe related phenomena?
 Step 2: LABEL — for each cluster, draft a short descriptive name (3-6 words).
-Step 3: REDUNDANCY CHECK — review your draft themes pairwise. If two themes share >50% of ICs or describe overlapping phenomena, merge them into one broader theme.
+Step 3: REDUNDANCY CHECK — review your draft themes pairwise. If two themes describe the SAME experiential phenomenon (not just the same domain), merge them. But themes in the same domain that capture DIFFERENT experiences should remain separate.
 Step 4: COVERAGE CHECK — verify every IC is assigned to at least one theme. If an IC doesn't fit, consider whether it should form part of a broader theme rather than being left out.
 Step 5: FINALISE — produce the output with short names, interpretive definitions, and rationale.
 
@@ -264,31 +264,41 @@ Given 18 ICs from negative game reviews:
   sequel_downgrade, predecessor_nostalgia, graphics_positive, gore_system_fun,
   game_abandoned_early, conditional_recommendation
 
-Step 1 (cluster): Combat+parkour ICs cluster together. Story+quest+NPC+character cluster. Price+length cluster. Predecessor ICs cluster. Positive ICs cluster. Engagement ICs are thin.
-Step 2 (label): "Core Mechanics Quality", "Narrative & Mission Design", "Perceived Value", "Series Regression", "Redeeming Qualities", "Player Retention"
-Step 3 (redundancy): "Player Retention" (game_abandoned_early, conditional_recommendation) overlaps heavily with "Perceived Value" — merge → "Value & Retention". 5 themes now.
-Step 4 (coverage): All 18 ICs assigned. map_design_empty fits under "Core Mechanics Quality" (traversal is a mechanic).
+Step 1 (cluster): Combat ICs cluster (sluggish, hit_detection, weapon). Parkour+traversal cluster (parkour, map, fast_travel). Story+character cluster. Quest design is a separate experience. Price+length+abandonment cluster. Predecessor ICs cluster. Positive ICs cluster.
+Step 2 (label): "Combat Responsiveness", "Traversal Frustrations", "Story & Character Depth", "Quest Repetition", "Price-Content Mismatch", "Player Abandonment", "Series Regression", "Redeeming Qualities"
+Step 3 (redundancy): "Player Abandonment" (game_abandoned_early, conditional_recommendation) is a CONSEQUENCE of poor value — but it describes a DIFFERENT experience (quitting/warning others vs. feeling ripped off). Keep separate. "Quest Repetition" has only 1 IC — merge into "Story & Character Depth" → "Narrative & Quest Engagement". 7 themes now.
+Step 4 (coverage): All 18 ICs assigned. Some ICs could appear in 2 themes (quest_design_repetitive could also relate to player abandonment).
 Step 5 (finalise):
 
-Theme 1: "Core Mechanics Quality" (6 ICs)
-  Definition: Player experience of fundamental gameplay systems — combat, parkour, traversal — as broken or unsatisfying.
-  ICs: combat_sluggish, hit_detection_broken, weapon_durability_poor, parkour_unresponsive, map_design_empty, fast_travel_missing
+Theme 1: "Combat Responsiveness" (3 ICs)
+  Definition: Core combat mechanics perceived as sluggish or unreliable, undermining moment-to-moment gameplay satisfaction.
+  ICs: combat_sluggish, hit_detection_broken, weapon_durability_poor
 
-Theme 2: "Narrative & Mission Design" (4 ICs)
-  Definition: Story delivery and quest structure perceived as repetitive, shallow, and failing to engage.
+Theme 2: "Traversal Frustrations" (3 ICs)
+  Definition: Movement and navigation systems that fail to deliver fluid, enjoyable world exploration.
+  ICs: parkour_unresponsive, map_design_empty, fast_travel_missing
+
+Theme 3: "Narrative & Quest Engagement" (4 ICs)
+  Definition: Story delivery, character writing, and quest structure perceived as shallow and failing to engage.
   ICs: quest_design_repetitive, story_predictable, npc_dialogue_poor, character_writing_shallow
 
-Theme 3: "Value & Retention" (4 ICs)
-  Definition: Perceived mismatch between price and content, leading to early abandonment or conditional purchase advice.
-  ICs: price_too_high, short_game_length, game_abandoned_early, conditional_recommendation
+Theme 4: "Price-Content Mismatch" (2 ICs)
+  Definition: Perceived mismatch between purchase price and amount of content delivered.
+  ICs: price_too_high, short_game_length
 
-Theme 4: "Series Regression" (2 ICs)
+Theme 5: "Player Abandonment Signals" (2 ICs)
+  Definition: Patterns of early quitting or conditional purchase advice indicating failed retention.
+  ICs: game_abandoned_early, conditional_recommendation
+
+Theme 6: "Series Regression" (2 ICs)
   Definition: Explicit comparison with predecessors framing the game as a step backward.
   ICs: sequel_downgrade, predecessor_nostalgia
 
-Theme 5: "Redeeming Qualities" (2 ICs)
+Theme 7: "Redeeming Qualities" (2 ICs)
   Definition: Isolated positive elements acknowledged despite overall negative assessment.
   ICs: graphics_positive, gore_system_fun
+
+NOTE: 7 themes for 18 ICs is appropriate. These themes will later be grouped into categories like "Core Mechanics", "Content & Value", "Comparative Assessment" etc.
 
 --- END EXAMPLE ---
 

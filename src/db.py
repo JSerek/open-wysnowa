@@ -470,6 +470,11 @@ class ThemeRepo:
             ).fetchall()
         return [r["ic_id"] for r in rows]
 
+    def assign_ic_to_theme(self, theme_id: str, ic_id: str) -> None:
+        """Convenience: assign a single IC to a theme (idempotent)."""
+        tic = ThemeIC(theme_id=theme_id, ic_id=ic_id)
+        self.assign_ic(tic)
+
     def dissolve_theme(self, theme_id: str) -> int:
         """Remove all IC-theme assignments. Theme record stays, ICs remain active."""
         with self.db.connect() as conn:

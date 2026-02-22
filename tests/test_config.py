@@ -49,6 +49,15 @@ class TestLoadConfig:
         config = load_config(CONFIG_PATH)
         assert config.processing.batch_size == 10
         assert config.processing.its_saturation_threshold == 0.02
+        assert config.processing.coherence_threshold == 1.0
+        assert config.processing.coherence_threshold_small == 0.90
+
+    def test_meta_ic_filter_config(self):
+        config = load_config(CONFIG_PATH)
+        meta = config.processing.meta_ic_filter
+        assert meta.enabled is True
+        assert isinstance(meta.name_patterns, list)
+        assert isinstance(meta.definition_signals, list)
 
     def test_study_config(self):
         config = load_config(CONFIG_PATH)
@@ -98,7 +107,7 @@ class TestModelClient:
         config = load_config(CONFIG_PATH)
         mc = ModelClient(config)
         client, model_id, params = mc.get_client("coder_agent")
-        assert model_id == "claude-sonnet-4-5-20250929"
+        assert model_id == "claude-haiku-4-5-20251001"
         assert params.temperature == 0.2
 
     @patch.dict(os.environ, {

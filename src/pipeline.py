@@ -150,30 +150,56 @@ class EQDPipeline:
             logger.info("[PIPELINE] Coherence quality gate")
             coherence_eval = self.quality_engine.evaluate_theme_coherence(
                 coherence_threshold=self.config.processing.coherence_threshold,
+                coherence_threshold_small=self.config.processing.coherence_threshold_small,
             )
             flagged = coherence_eval.get("flagged_themes", [])
 
+            dissolved_themes = []  # track for IC redistribution
             if flagged:
                 dissolved_count = 0
+                theme_repo = _ThemeRepo(self.db)
                 if enable_hil:
                     for ft in flagged:
                         display_flagged_theme(ft)
                         if prompt_theme_dissolve():
-                            _ThemeRepo(self.db).dissolve_theme(ft["theme_id"])
+                            # Collect orphaned ICs before dissolving
+                            orphaned_ics = theme_repo.get_ics_for_theme(ft["theme_id"])
+                            theme_repo.dissolve_theme(ft["theme_id"])
+                            dissolved_themes.append({
+                                "theme_name": ft["theme_name"],
+                                "orphaned_ic_ids": orphaned_ics,
+                            })
                             dissolved_count += 1
-                            logger.info(f"[COHERENCE] Dissolved '{ft['theme_name']}'")
+                            logger.info(f"[COHERENCE] Dissolved '{ft['theme_name']}' ({len(orphaned_ics)} ICs orphaned)")
                 else:
-                    theme_repo = _ThemeRepo(self.db)
                     for ft in flagged:
+                        orphaned_ics = theme_repo.get_ics_for_theme(ft["theme_id"])
                         theme_repo.dissolve_theme(ft["theme_id"])
+                        dissolved_themes.append({
+                            "theme_name": ft["theme_name"],
+                            "orphaned_ic_ids": orphaned_ics,
+                        })
                         dissolved_count += 1
                         logger.info(
                             f"[COHERENCE] Auto-dissolved '{ft['theme_name']}' "
-                            f"(norm={ft['normalized']:.3f})"
+                            f"(norm={ft['normalized']:.3f}, {len(orphaned_ics)} ICs orphaned)"
                         )
                 results["layer2"]["themes_dissolved"] = dissolved_count
 
+                # ── Orphaned IC Redistribution ──────────────────────────
+                if dissolved_themes:
+                    redistributed, unassigned = self._redistribute_orphaned_ics(
+                        dissolved_themes, theme_repo
+                    )
+                    results["layer2"]["ics_redistributed"] = redistributed
+                    results["layer2"]["ics_unassigned"] = len(unassigned)
+                    if unassigned:
+                        results["layer2"]["unassigned_ic_ids"] = unassigned
+
             results["layer2"]["coherence_gate"] = coherence_eval
+            results["layer2"]["dissolved_theme_names"] = [
+                dt["theme_name"] for dt in dissolved_themes
+            ]
 
         # ── Category Synthesis ──────────────────────────────────────────
         if themes:
@@ -198,6 +224,7 @@ class EQDPipeline:
             total_dropped=layer1_summary.get("total_dropped", 0),
             total_candidates=layer1_summary.get("total_candidates", 0),
             dropped_per_segment=layer1_summary.get("dropped_per_segment", {}),
+            ic_stability_scores=layer1_summary.get("ic_stability_scores", []),
         )
 
         # Add cumulative saturation curve from Layer 1
@@ -389,6 +416,102 @@ class EQDPipeline:
                     warnings.append((name_a, name_b, sim))
 
         return warnings
+
+    def _redistribute_orphaned_ics(
+        self,
+        dissolved_themes: List[Dict],
+        theme_repo,
+        min_similarity: float = 0.5,
+    ) -> tuple[int, List[str]]:
+        """
+        Redistribute orphaned ICs from dissolved themes to the nearest surviving theme.
+
+        For each orphaned IC, compute embedding similarity to each surviving theme's
+        centroid. Assign to the best match if above min_similarity, otherwise mark as
+        unassigned.
+
+        Returns (redistributed_count, unassigned_ic_ids).
+        """
+        from src.embeddings import cosine_similarity
+
+        # Collect all orphaned IC IDs (only those not in any other theme)
+        all_orphaned = []
+        for dt in dissolved_themes:
+            for ic_id in dt["orphaned_ic_ids"]:
+                # Check if this IC is still assigned to another theme
+                with self.db.connect() as conn:
+                    row = conn.execute(
+                        "SELECT COUNT(*) as cnt FROM theme_ics WHERE ic_id=?", (ic_id,)
+                    ).fetchone()
+                    if row["cnt"] == 0:
+                        all_orphaned.append(ic_id)
+
+        if not all_orphaned:
+            return 0, []
+
+        # Get surviving themes and compute centroids
+        surviving_themes, _ = theme_repo.get_latest_round()
+        theme_centroids: Dict[str, List[float]] = {}
+        for theme in surviving_themes:
+            ic_ids = theme_repo.get_ics_for_theme(theme.id)
+            if not ic_ids:
+                continue  # dissolved theme (0 ICs)
+            embeddings = []
+            for ic_id in ic_ids:
+                ic = self.layer1.ic_repo.get_by_id(ic_id)
+                if ic and ic.embedding_json:
+                    embeddings.append(ic.embedding_json)
+            if embeddings:
+                # Compute centroid as mean embedding
+                dim = len(embeddings[0])
+                centroid = [
+                    sum(e[d] for e in embeddings) / len(embeddings)
+                    for d in range(dim)
+                ]
+                theme_centroids[theme.id] = centroid
+
+        if not theme_centroids:
+            return 0, all_orphaned
+
+        redistributed = 0
+        unassigned = []
+
+        for ic_id in all_orphaned:
+            ic = self.layer1.ic_repo.get_by_id(ic_id)
+            if not ic or not ic.embedding_json:
+                unassigned.append(ic_id)
+                continue
+
+            # Find best matching theme
+            best_theme_id = None
+            best_sim = -1.0
+            for theme_id, centroid in theme_centroids.items():
+                sim = cosine_similarity(ic.embedding_json, centroid)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_theme_id = theme_id
+
+            if best_sim >= min_similarity and best_theme_id:
+                # Assign IC to the best theme
+                theme_repo.assign_ic_to_theme(best_theme_id, ic_id)
+                redistributed += 1
+                # Find theme name for logging
+                theme_name = next(
+                    (t.name for t in surviving_themes if t.id == best_theme_id),
+                    best_theme_id,
+                )
+                logger.info(
+                    f"[COHERENCE] Redistributed '{ic.name}' → '{theme_name}' "
+                    f"(sim={best_sim:.3f})"
+                )
+            else:
+                unassigned.append(ic_id)
+                logger.info(
+                    f"[COHERENCE] '{ic.name}' unassigned (best_sim={best_sim:.3f} "
+                    f"< min={min_similarity})"
+                )
+
+        return redistributed, unassigned
 
     def _run_category_synthesis(self) -> Dict[str, Any]:
         """

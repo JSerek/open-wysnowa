@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── Config Pydantic models ────────────────────────────────────────────────────
@@ -40,6 +40,12 @@ class StudyConfig(BaseModel):
     embedding_model_locked: bool = False
 
 
+class MetaICFilterConfig(BaseModel):
+    enabled: bool = True
+    name_patterns: List[str] = Field(default_factory=list)
+    definition_signals: List[str] = Field(default_factory=list)
+
+
 class ProcessingConfig(BaseModel):
     batch_size: int = 15
     segments_per_coder_call: int = 5  # micro-batch: segments per LLM call
@@ -51,6 +57,8 @@ class ProcessingConfig(BaseModel):
     auto_merge_threshold: float = 0.8    # max_sim above this → auto-MERGE (skip LLM)
     category_merge_threshold: float = 0.85  # centroid sim above this → merge categories
     coherence_threshold: float = 1.0     # normalized coherence below this → flag/dissolve
+    coherence_threshold_small: float = 0.90  # threshold for themes with <5 ICs
+    meta_ic_filter: MetaICFilterConfig = Field(default_factory=MetaICFilterConfig)
 
 
 class EQDConfig(BaseModel):

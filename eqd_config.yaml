@@ -93,3 +93,8 @@ processing:
   auto_merge_threshold: 0.72
   category_merge_threshold: 0.85
   coherence_threshold: 1.0
+  coherence_threshold_small: 0.90
+  meta_ic_filter:
+    enabled: true
+    name_patterns: []      # domain-agnostic: empty by default. Add patterns like "overall_", "_verdict" for your domain
+    definition_signals: []  # domain-agnostic: empty by default. Add signals like "overall experience" for your domain

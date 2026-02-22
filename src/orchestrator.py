@@ -60,36 +60,29 @@ logger = logging.getLogger(__name__)
 
 # ── Meta-IC Filtering ────────────────────────────────────────────────────────
 
-# Patterns for meta-commentary detection (name-level and definition-level)
-_META_NAME_PATTERNS = [
-    "overall_", "biggest_disappointment", "worst_game", "best_game",
-    "glowing_reviews", "undeserved_reviews", "overrated", "underrated",
-    "_verdict", "_summary_opinion", "negative_experience_despite",
-    "positive_experience_overall", "game_of_the_year",
-]
 
-_META_DEFINITION_SIGNALS = [
-    "overall experience", "biggest disappointment", "other reviewers",
-    "undeserved praise", "despite completing", "general impression",
-    "would not recommend", "worst game", "game of the year",
-]
-
-
-def is_meta_commentary(candidate: ICCandidate) -> Tuple[bool, str]:
+def is_meta_commentary(
+    candidate: ICCandidate,
+    name_patterns: List[str],
+    definition_signals: List[str],
+) -> Tuple[bool, str]:
     """
     Lightweight heuristic: does this IC describe a meta-level verdict
     rather than a specific product experience?
+
+    Patterns are loaded from eqd_config.yaml → processing.meta_ic_filter.
+    Empty lists = no heuristic filtering (prompt rule #9 is the primary defense).
 
     Returns (is_meta, reason). No LLM calls.
     """
     name_lower = candidate.ic_name.lower()
     def_lower = candidate.definition.lower()
 
-    for pattern in _META_NAME_PATTERNS:
+    for pattern in name_patterns:
         if pattern in name_lower:
             return True, f"name_pattern:{pattern}"
 
-    for signal in _META_DEFINITION_SIGNALS:
+    for signal in definition_signals:
         if signal in def_lower:
             return True, f"definition_signal:{signal}"
 
@@ -382,7 +375,15 @@ class Layer1Orchestrator:
                     })
 
                 # ── Meta-IC filtering ─────────────────────────────────────
-                is_meta, meta_reason = is_meta_commentary(cand)
+                meta_cfg = self.config.processing.meta_ic_filter
+                is_meta = False
+                meta_reason = ""
+                if meta_cfg.enabled:
+                    is_meta, meta_reason = is_meta_commentary(
+                        cand,
+                        name_patterns=meta_cfg.name_patterns,
+                        definition_signals=meta_cfg.definition_signals,
+                    )
                 if is_meta:
                     if not enable_hil:
                         # Auto-reject
@@ -508,6 +509,9 @@ class Layer1Orchestrator:
         summary["triage_stats"] = dict(self.triage_stats)
         summary["batch_merge_rates"] = list(self.batch_merge_rates)
         summary["grey_zone_decisions"] = list(self.grey_zone_decisions)
+
+        # IC stability scores from refinement
+        summary["ic_stability_scores"] = getattr(self, "_ic_stability_scores", [])
 
         return summary
 
@@ -826,6 +830,8 @@ class Layer1Orchestrator:
         client, model_id, params = self.model_client.get_client(agent_name)
 
         refined_count = 0
+        stability_scores: List[Dict[str, Any]] = []
+
         for ic, quotes in candidates:
             quote_texts = [q.quote_text for q in quotes]
             merge_count = len(quotes) - 1  # first quote is from creation
@@ -838,6 +844,9 @@ class Layer1Orchestrator:
             )
 
             try:
+                # Capture pre-refinement embedding for stability measurement
+                old_embedding = ic.embedding_json
+
                 result = client.chat.completions.create(
                     model=model_id,
                     response_model=RefinedICOutput,
@@ -851,6 +860,15 @@ class Layer1Orchestrator:
 
                 # Re-embed with updated definition
                 ic = self.embedding_service.embed_ic(ic)
+
+                # Compute stability score (cosine similarity between old and new embedding)
+                if old_embedding and ic.embedding_json:
+                    from src.embeddings import cosine_similarity as _cos_sim
+                    stability = _cos_sim(old_embedding, ic.embedding_json)
+                    stability_scores.append({
+                        "ic_name": ic.name,
+                        "stability": round(stability, 4),
+                    })
 
                 # Persist
                 self.ic_repo.update(ic)
@@ -866,4 +884,8 @@ class Layer1Orchestrator:
                 )
 
         logger.info(f"[IC:REFINE] Complete: {refined_count}/{len(candidates)} refined")
+
+        # Store stability scores on the orchestrator for later retrieval
+        self._ic_stability_scores = stability_scores
+
         return refined_count

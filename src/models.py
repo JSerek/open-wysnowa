@@ -51,6 +51,9 @@ class MetricType(str, Enum):
     CROSS_THEME_IC_SHARING = "cross_theme_ic_sharing"
     COHERENCE_NORMALIZED = "coherence_normalized"
     CANDIDATE_DROP_RATE = "candidate_drop_rate"
+    THEMATIC_COVERAGE = "thematic_coverage"
+    CROSS_REVIEW_CONVERGENCE = "cross_review_convergence"
+    IC_STABILITY = "ic_stability"
 
 
 # ── Document & Segment ────────────────────────────────────────────────────────

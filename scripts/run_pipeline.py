@@ -158,6 +158,10 @@ Examples:
     dissolved = results.get('layer2', {}).get('themes_dissolved', 0)
     if dissolved:
         print(f"  Dissolved:    {dissolved} low-coherence themes")
+        redist = results.get('layer2', {}).get('ics_redistributed', 0)
+        unassigned = results.get('layer2', {}).get('ics_unassigned', 0)
+        if redist or unassigned:
+            print(f"  Redistributed: {redist} ICs reassigned, {unassigned} unassigned")
 
     l3 = results.get("layer3", {})
     if l3:
@@ -329,6 +333,49 @@ Examples:
             for shared in cross.get("shared_ics", [])[:5]:
                 print(f"    {shared.get('ic_name', '?')} → "
                       f"{', '.join(shared.get('themes', []))}")
+
+        # IC Stability Index
+        ic_stab = l3.get("ic_stability", {})
+        if ic_stab and ic_stab.get("refined_count", 0) > 0:
+            ms = ic_stab.get("mean_stability", 0)
+            rewritten = ic_stab.get("substantially_rewritten", 0)
+            total_r = ic_stab.get("refined_count", 0)
+            flag = "" if ms > 0.90 else "⚠ "
+            print(f"  {flag}IC stability:  mean={ms:.4f} "
+                  f"({rewritten}/{total_r} substantially rewritten)")
+            # Show bottom 5 least stable
+            per_ic = ic_stab.get("per_ic", [])
+            for s in per_ic[:5]:
+                stab = s.get("stability", 0)
+                mark = "⚠ " if stab < 0.85 else "  "
+                print(f"    {mark}{stab:.4f}  {s.get('ic_name', '?')}")
+
+        # Orphaned ICs
+        orphaned = l3.get("orphaned_ics", {})
+        if orphaned and orphaned.get("orphaned_count", 0) > 0:
+            oc = orphaned.get("orphaned_count", 0)
+            total_a = orphaned.get("total_active_ics", 0)
+            print(f"  ⚠ Orphaned ICs: {oc}/{total_a} not in any theme")
+            for name in orphaned.get("orphaned_names", [])[:5]:
+                print(f"    - {name}")
+
+        # Thematic Coverage
+        coverage = l3.get("thematic_coverage", {})
+        if coverage and coverage.get("total_quotes", 0) > 0:
+            cr = coverage.get("coverage_ratio", 0)
+            flag = "" if cr >= 0.95 else "⚠ "
+            print(f"  {flag}Thematic coverage: {cr:.1%} "
+                  f"({coverage.get('covered_quotes', 0)}/{coverage.get('total_quotes', 0)} quotes)")
+
+        # Cross-Review Convergence
+        conv = l3.get("cross_review_convergence", {})
+        if conv and conv.get("mean_docs_per_ic", 0) > 0:
+            md = conv.get("mean_docs_per_ic", 0)
+            conf = conv.get("confirmed_ratio", 0)
+            strong = conv.get("strong_convergence_ratio", 0)
+            print(f"  Convergence:  mean={md:.1f} docs/IC, "
+                  f"confirmed={conf:.1%} (2+ docs), "
+                  f"strong={strong:.1%} (3+ docs)")
 
     # Category summary
     cat_results = results.get("categories", {})
