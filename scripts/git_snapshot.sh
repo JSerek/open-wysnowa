@@ -36,7 +36,7 @@ git add \
     IDEAS.md \
     2>/dev/null || true
 
-for f in requirements.txt README.md pyproject.toml setup.py setup.cfg; do
+for f in requirements.txt README.md pyproject.toml setup.py setup.cfg .env.example IDEAS.md PLAN.md; do
     [ -f "$f" ] && git add "$f" 2>/dev/null || true
 done
 
@@ -53,9 +53,17 @@ fi
 # Commit
 git commit -m "$MSG"
 
+# Push to GitHub if remote exists
+if git remote get-url origin &>/dev/null; then
+    echo ""
+    echo "Pushing to GitHub..."
+    git push
+fi
+
 echo ""
 echo "── Snapshot saved ✓ ───────────────────────────────────"
 git log --oneline -3
 echo ""
-echo "Rollback if needed:  git reset --soft HEAD~1"
+echo "GitHub: https://github.com/JSerek/eqd-ai"
+echo "Rollback if needed:  git reset --soft HEAD~1 && git push --force-with-lease"
 echo ""
