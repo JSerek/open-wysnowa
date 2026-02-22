@@ -246,7 +246,8 @@ class ICCandidate(BaseModel):
     span_start: int = Field(ge=0)
     span_end: int = Field(ge=1)
     confidence: float = Field(ge=0.0, le=1.0, description="Model confidence 0-1")
-    sentiment: Sentiment = Field(
+    sentiment: Optional[Sentiment] = Field(
+        default=None,
         description="Sentiment of the verbatim quote: positive, negative, neutral, or mixed",
     )
     existing_code_match: Optional[str] = Field(
