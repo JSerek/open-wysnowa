@@ -394,9 +394,6 @@ class CategoryAgent:
         max_tokens: int,
     ) -> CategorySynthesisOutput:
         """Instructor-patched LLM call for category synthesis."""
-        extra = {}
-        if "claude" in model_id.lower():
-            extra["betas"] = ["output-128k-2025-02-19"]
         return client.chat.completions.create(
             model=model_id,
             response_model=CategorySynthesisOutput,
@@ -406,5 +403,4 @@ class CategoryAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
-            **extra,
         )

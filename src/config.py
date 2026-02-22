@@ -226,7 +226,13 @@ class ModelClient:
 
         elif provider.type == "anthropic":
             from anthropic import Anthropic
-            raw = Anthropic(api_key=api_key)
+            # Extended output beta: enables up to 128k output tokens.
+            # Sent as a default header so all calls through this client benefit
+            # without touching individual call sites.
+            raw = Anthropic(
+                api_key=api_key,
+                default_headers={"anthropic-beta": "output-128k-2025-02-19"},
+            )
             client = instructor.from_anthropic(raw)
 
         else:
