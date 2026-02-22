@@ -60,6 +60,8 @@ METHODOLOGY PRINCIPLES:
 7. ONE QUOTE PER CODE — each ICCandidate gets exactly one verbatim quote. If multiple quotes support the same code, pick the most representative one.
 8. PREFER BROADER CODES — do NOT create separate codes for every sentence. Look for the broader meaning units. A single review with 5 complaints about different aspects of combat should yield 1-2 combat-related codes, not 5. Aim for 2-5 codes per segment. More than 7 is almost always over-coding.
 9. NO META-COMMENTARY — Do not extract codes about the overall verdict, the discourse around the product, or other reviewers' opinions. Codes must describe SPECIFIC aspects of the product experience. Bad: "biggest_disappointment_2025", "glowing_reviews_undeserved" Good: "combat_system_repetitive", "price_not_justified_for_content"
+10. SPECIFICITY MATCHES THE TEXT — Be as specific as the text allows, no more. If the segment identifies a specific system or feature, name it. If the segment expresses general dissatisfaction without identifying specific causes, create an IC that captures the general nature of the experience — never fabricate specifics that aren't in the text.
+11. ASSESS SENTIMENT — For each IC, assess the sentiment of the verbatim quote: positive, negative, neutral, or mixed. Sentiment is determined by what the quote expresses, not by the overall tone of the review. A negative review can contain positive quotes ("the graphics are great") and vice versa.
 
 IC NAMING CONVENTIONS:
 - Use lowercase_with_underscores (e.g., delivery_speed_complaint, product_quality_praise)
@@ -76,36 +78,64 @@ Good coding (4 codes — right granularity):
    quote_text: "The combat feels sluggish and unresponsive, weapons break way too fast, and the hit detection is completely broken"
    span_start: 23, span_end: 134
    confidence: 0.9
+   sentiment: negative
 
 2. ic_name: "sequel_downgrade_from_predecessor"
    definition: "Player perceives the sequel as significantly worse than the original game"
    quote_text: "I loved the first game but this sequel is a massive downgrade"
    span_start: 136, span_end: 196
    confidence: 0.85
+   sentiment: negative
 
 3. ic_name: "graphics_positive_assessment"
    definition: "Player praises the visual quality as the only positive aspect"
    quote_text: "The only good thing is the graphics which are genuinely impressive"
    span_start: 198, span_end: 263
    confidence: 0.8
+   sentiment: positive
 
 4. ic_name: "negative_purchase_recommendation"
    definition: "Player explicitly warns others against buying the game"
    quote_text: "Don't waste your money on this"
    span_start: 265, span_end: 295
    confidence: 0.85
+   sentiment: negative
 
-BAD coding (over-coded — too many micro-codes):
-- "combat_sluggish", "combat_unresponsive", "weapon_durability_poor", "hit_detection_broken" — these are 4 codes for one sentence that describes a single meaning unit (poor combat quality). Merge them.
-- "game_terrible_overall" — too vague, just restates the sentiment without analytical content.
+--- NEGATIVE EXAMPLES (common errors) ---
 
---- END EXAMPLE ---
+ERROR 1 — Fabricated specificity:
+  Segment: "I just didn't enjoy this game at all, nothing about it worked for me"
+  BAD:  ic_name: "combat_system_unenjoyable"  ← WRONG: text doesn't mention combat
+  WHY:  The text is GENERAL dissatisfaction. The coder invented "combat" to sound specific.
+  FIX:  ic_name: "overall_negative_experience"
+        definition: "Player expresses broad dissatisfaction without identifying specific causes"
+        sentiment: negative
+
+ERROR 2 — Meta-commentary instead of experience:
+  Segment: "this is the worst game of 2025, I can't believe reviewers are praising it"
+  BAD:  ic_name: "worst_game_2025"  ← WRONG: this is a verdict, not an experience
+  BAD:  ic_name: "reviewers_praising_undeserved"  ← WRONG: about other people's opinions
+  WHY:  Neither code describes an aspect of the product experience.
+  FIX:  No codes should be extracted — the segment lacks specific experiential content.
+
+ERROR 3 — Wrong sentiment assignment:
+  Segment: "The graphics are the only thing saving this trainwreck"
+  BAD:  sentiment: negative  ← WRONG: the QUOTE is about graphics being good
+  WHY:  Sentiment follows the QUOTE, not the overall review tone.
+  FIX:  sentiment: positive (the quote praises graphics, even if the review is negative)
+
+ERROR 4 — Over-coding micro-observations:
+  BAD: 5 separate codes: "combat_sluggish", "combat_unresponsive", "weapon_durability_poor", "hit_detection_broken", "game_terrible_overall"
+  WHY: Four codes for one sentence = one meaning unit split artificially. "game_terrible_overall" is vague meta-commentary.
+  FIX: One code: "combat_system_poor_quality" capturing the full meaning unit.
+
+--- END EXAMPLES ---
 
 {codebook_context}
 
 OUTPUT: For the given segment, return a SegmentCodingResult with:
 - segment_id: the ID provided in the user prompt
-- candidates: list of ICCandidate objects (may be empty if no meaningful codes found)"""
+- candidates: list of ICCandidate objects, each including a sentiment field (positive/negative/neutral/mixed). May be empty if no meaningful codes found."""
 
 
 def build_coder_user_prompt(segment_id: str, canonical_text: str) -> str:
@@ -177,6 +207,29 @@ DECISION CRITERIA:
 - Similarity score 0.70-0.85: grey zone — look at definitions carefully
 - Similarity score < 0.70: likely a new code
 - Consider: do the codes describe the SAME thing from DIFFERENT angles, or DIFFERENT things that happen to use similar words?
+
+--- NEGATIVE EXAMPLE (over-merging) ---
+
+Existing IC: "combat_system_poor_quality"
+  Definition: "Player criticises core combat mechanics as sluggish, unresponsive, or broken"
+
+New candidate: "weapon_variety_lacking"
+  Definition: "Player feels the weapon selection is too limited, lacking interesting options"
+  Similarity: 0.78
+
+BAD:  recommendation: MERGE → "combat_system_poor_quality"
+WHY:  Both involve combat/weapons, but they describe DIFFERENT experiences:
+      one is about mechanical quality (responsiveness, hit detection),
+      the other is about content variety (number and diversity of weapons).
+      Merging them would conflate two analytically distinct phenomena.
+FIX:  recommendation: NEW
+      reasoning: "Despite domain overlap (combat), these codes describe distinct
+      experiential phenomena — mechanical quality vs. content variety."
+
+RULE: Similar words or shared domain ≠ same meaning. Only merge when the codes
+describe the SAME experiential phenomenon in different wording.
+
+--- END EXAMPLE ---
 
 OUTPUT: Return a ComparatorOutput with your recommendation and brief reasoning."""
 
@@ -300,7 +353,42 @@ Theme 7: "Redeeming Qualities" (2 ICs)
 
 NOTE: 7 themes for 18 ICs is appropriate. These themes will later be grouped into categories like "Core Mechanics", "Content & Value", "Comparative Assessment" etc.
 
---- END EXAMPLE ---
+--- NEGATIVE EXAMPLES (common synthesis errors) ---
+
+ERROR 1 — Mixed-sentiment theme:
+  BAD theme: "Combat Mechanics" containing:
+    - combat_sluggish (negative)
+    - hit_detection_broken (negative)
+    - combat_visceral_satisfying (positive)
+    - gore_system_fun (positive)
+  WHY: This theme mixes negative combat criticism with positive combat praise.
+       Analytically, "combat is broken" and "combat feels great" are OPPOSITE
+       experiences that happen to share a domain. Grouping them into one theme
+       hides the conflict and makes the theme uninterpretable.
+  FIX: Split into two themes:
+    - "Combat Responsiveness Issues" (combat_sluggish, hit_detection_broken)
+    - "Satisfying Combat Feedback" (combat_visceral_satisfying, gore_system_fun)
+  NOTE: Mixed-sentiment themes CAN be valid when ICs describe genuinely
+        contested phenomena (e.g., "difficulty_too_high" + "difficulty_rewarding"
+        could form "Difficulty Polarisation"). But this must be explicit and
+        intentional, not accidental domain-level grouping.
+
+ERROR 2 — Category-level grouping (too broad):
+  BAD theme: "Technical Issues" containing:
+    - framerate_drops, loading_times_long, crash_on_startup,
+    - graphics_blurry, audio_glitches, save_corruption,
+    - multiplayer_desync, server_downtime
+  WHY: 8 ICs spanning frame rate, loading, crashes, graphics, audio, saves,
+       and multiplayer. This is a CATEGORY (top-level domain), not a theme
+       (specific experiential pattern). No shared meaning unites "blurry
+       graphics" and "server downtime" except "they're both technical."
+  FIX: Split into specific themes:
+    - "Performance & Stability" (framerate_drops, crash_on_startup, loading_times_long)
+    - "Audiovisual Polish" (graphics_blurry, audio_glitches)
+    - "Multiplayer Reliability" (multiplayer_desync, server_downtime)
+    - save_corruption might join "Performance & Stability" or a data integrity theme
+
+--- END EXAMPLES ---
 
 OUTPUT: Return a SynthesisOutput with:
 - reasoning: write out your chain-of-thought here — the 5 steps above (CLUSTER, LABEL, REDUNDANCY CHECK, COVERAGE CHECK, FINALISE). Show your working: which ICs cluster together and why, what labels you draft, which themes you considered merging, and what you decided. This is your scratchpad.

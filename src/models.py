@@ -54,6 +54,7 @@ class MetricType(str, Enum):
     THEMATIC_COVERAGE = "thematic_coverage"
     CROSS_REVIEW_CONVERGENCE = "cross_review_convergence"
     IC_STABILITY = "ic_stability"
+    SENTIMENT_PURITY = "sentiment_purity"
 
 
 # ── Document & Segment ────────────────────────────────────────────────────────
@@ -105,6 +106,10 @@ class VerbatimQuote(BaseModel):
     span_start: int = Field(ge=0)
     span_end: int = Field(ge=0)
     is_verified: bool = Field(default=False)
+    sentiment: Optional[str] = Field(
+        default=None,
+        description="Sentiment of the quote: positive, negative, neutral, or mixed",
+    )
     quote_embedding_json: Optional[List[float]] = None
 
     @field_validator("span_end")
@@ -220,6 +225,14 @@ class QualityMetric(BaseModel):
 
 # ── Layer 1: LLM Response Models ────────────────────────────────────────────
 
+class Sentiment(str, Enum):
+    """Sentiment of a verbatim quote as assessed by the Coder Agent."""
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEUTRAL = "neutral"
+    MIXED = "mixed"
+
+
 class ICCandidate(BaseModel):
     """
     Single IC candidate extracted by the Coder Agent from a segment.
@@ -233,6 +246,9 @@ class ICCandidate(BaseModel):
     span_start: int = Field(ge=0)
     span_end: int = Field(ge=1)
     confidence: float = Field(ge=0.0, le=1.0, description="Model confidence 0-1")
+    sentiment: Sentiment = Field(
+        description="Sentiment of the verbatim quote: positive, negative, neutral, or mixed",
+    )
     existing_code_match: Optional[str] = Field(
         default=None,
         description="Name of matching existing IC, or null if proposing new code",

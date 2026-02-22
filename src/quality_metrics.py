@@ -271,7 +271,11 @@ class QualityMetricsEngine:
         convergence = self.compute_cross_review_convergence()
         results["cross_review_convergence"] = convergence
 
-        logger.info("All quality metrics computed (16 metrics)")
+        # 17. Sentiment Purity
+        sentiment_purity = self.compute_sentiment_purity()
+        results["sentiment_purity"] = sentiment_purity
+
+        logger.info("All quality metrics computed (17 metrics)")
         return results
 
     def compute_grounding(self) -> Dict[str, Any]:
@@ -1340,5 +1344,110 @@ class QualityMetricsEngine:
         logger.info(
             f"Cross-review convergence: mean={mean_docs:.1f} docs/IC, "
             f"confirmed={confirmed_ratio:.1%}, strong={strong_ratio:.1%}"
+        )
+        return result
+
+    # ── P4e: Theme Sentiment Purity ───────────────────────────────────────────
+
+    def compute_sentiment_purity(self) -> Dict[str, Any]:
+        """
+        Per-theme sentiment purity: dominant_sentiment_count / total_quotes_with_sentiment.
+
+        Each VerbatimQuote carries a sentiment (positive/negative/neutral/mixed)
+        assigned by the coder agent. For each theme, we trace:
+        theme → ICs → quotes → sentiment, then compute the distribution.
+
+        Purity = count_of_dominant_sentiment / total_quotes_with_sentiment.
+        Flagged when purity < 0.70.
+
+        This is a SIGNAL, not a gate. Mixed-sentiment themes may be legitimate
+        contested phenomena (e.g., "Difficulty Polarisation").
+
+        Returns {
+            "per_theme": {
+                theme_name: {
+                    "purity": float,
+                    "dominant": str,
+                    "distribution": {"positive": int, "negative": int, "neutral": int, "mixed": int},
+                    "total_with_sentiment": int,
+                    "flagged": bool,
+                }
+            },
+            "avg_purity": float,
+            "flagged_count": int,
+        }
+        """
+        final_themes, _ = self.theme_repo.get_latest_round()
+        if not final_themes:
+            return {"per_theme": {}, "avg_purity": 1.0, "flagged_count": 0}
+
+        per_theme: Dict[str, Dict[str, Any]] = {}
+        purities = []
+        flagged_count = 0
+
+        for theme in final_themes:
+            ic_ids = self.theme_repo.get_ics_for_theme(theme.id)
+            if not ic_ids:
+                continue  # Skip dissolved themes
+
+            # Collect sentiment counts from all quotes across this theme's ICs
+            sentiment_counts: Dict[str, int] = {
+                "positive": 0, "negative": 0, "neutral": 0, "mixed": 0,
+            }
+            total_with_sentiment = 0
+
+            for ic_id in ic_ids:
+                quotes = self.vq_repo.get_all_for_ic(ic_id)
+                for q in quotes:
+                    if q.sentiment and q.sentiment in sentiment_counts:
+                        sentiment_counts[q.sentiment] += 1
+                        total_with_sentiment += 1
+
+            if total_with_sentiment == 0:
+                per_theme[theme.name] = {
+                    "purity": 1.0,
+                    "dominant": "unknown",
+                    "distribution": sentiment_counts,
+                    "total_with_sentiment": 0,
+                    "flagged": False,
+                }
+                continue
+
+            dominant_sentiment = max(sentiment_counts, key=sentiment_counts.get)
+            dominant_count = sentiment_counts[dominant_sentiment]
+            purity = dominant_count / total_with_sentiment
+
+            flagged = purity < 0.70
+            if flagged:
+                flagged_count += 1
+
+            purities.append(purity)
+
+            per_theme[theme.name] = {
+                "purity": round(purity, 3),
+                "dominant": dominant_sentiment,
+                "distribution": sentiment_counts,
+                "total_with_sentiment": total_with_sentiment,
+                "flagged": flagged,
+            }
+
+            # Persist per-theme
+            self.qm_repo.insert(QualityMetric(
+                metric_type=MetricType.SENTIMENT_PURITY,
+                entity_id=theme.id,
+                entity_type="theme",
+                value=purity,
+            ))
+
+        avg_purity = sum(purities) / len(purities) if purities else 1.0
+
+        result = {
+            "per_theme": per_theme,
+            "avg_purity": round(avg_purity, 3),
+            "flagged_count": flagged_count,
+        }
+        logger.info(
+            f"Sentiment purity: avg={avg_purity:.3f}, "
+            f"{flagged_count} themes flagged (<0.70)"
         )
         return result

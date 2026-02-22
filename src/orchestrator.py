@@ -626,13 +626,14 @@ class Layer1Orchestrator:
         # Persist IC
         self.ic_repo.insert(ic)
 
-        # Create verbatim quote
+        # Create verbatim quote (propagate sentiment from candidate)
         quote = VerbatimQuote(
             ic_id=ic.id,
             segment_id=segment_id,
             quote_text=candidate.quote_text,
             span_start=candidate.span_start,
             span_end=candidate.span_end,
+            sentiment=candidate.sentiment.value if hasattr(candidate, 'sentiment') and candidate.sentiment else None,
         )
 
         # Verify quote against canonical text
@@ -682,13 +683,14 @@ class Layer1Orchestrator:
             self._apply_reject(candidate, comp_output, notes)
             return None
 
-        # Create verbatim quote for the existing IC
+        # Create verbatim quote for the existing IC (propagate sentiment)
         quote = VerbatimQuote(
             ic_id=target_ic.id,
             segment_id=segment_id,
             quote_text=candidate.quote_text,
             span_start=candidate.span_start,
             span_end=candidate.span_end,
+            sentiment=candidate.sentiment.value if hasattr(candidate, 'sentiment') and candidate.sentiment else None,
         )
 
         segment = self.segment_repo.get_by_id(segment_id)
@@ -764,13 +766,14 @@ class Layer1Orchestrator:
             )
             return None
 
-        # Create verbatim quote
+        # Create verbatim quote (propagate sentiment)
         quote = VerbatimQuote(
             ic_id=target_ic.id,
             segment_id=segment_id,
             quote_text=candidate.quote_text,
             span_start=candidate.span_start,
             span_end=candidate.span_end,
+            sentiment=candidate.sentiment.value if hasattr(candidate, 'sentiment') and candidate.sentiment else None,
         )
 
         segment = self.segment_repo.get_by_id(segment_id)

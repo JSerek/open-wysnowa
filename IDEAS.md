@@ -1,88 +1,56 @@
 # EQD-AI — Ideas & Roadmap
 
-Status legend: `[ready]` = spec clear, can implement next · `[design]` = needs design decisions · `[explore]` = needs research/prototyping · `[later]` = future vision, park for now
+Status legend: `[ready]` = spec clear, can implement next · `[design]` = needs design decisions · `[explore]` = needs research/prototyping · `[later]` = future vision, park for now · `[resolved]` = implemented
 
 ---
 
-## Current Sprint — Improvements to Layers 1–3
+## Resolved — Implemented Features
 
-### P1: Synthesizer Prompt Granularity Fix `[ready]`
+### P1: Synthesizer Prompt Granularity Fix `[resolved]`
+Replaced "FEWER IS BETTER" principle with "SPECIFICITY OVER PARSIMONY" — targets 3–6 ICs/theme, references category layer, allows two themes in same domain. Updated few-shot example to show 7 specific themes instead of 5 broad ones. Updated redundancy check to merge only same-phenomenon, not same-domain themes.
 
-**Problem:** The synthesizer produces category-level groupings and calls them themes. "Core Mechanics Quality" with 15 ICs is a category, not a theme. This collapses the Braun & Clarke IC → Theme → Category hierarchy into IC → Category.
+### P2: Meta-IC Filtering — YAML Configurable `[resolved]`
+Moved hardcoded patterns to `eqd_config.yaml` under `meta_ic_filter` section. Defaults to empty lists (domain-agnostic). Users add domain-specific patterns as they learn their data. Prompt rule #9 remains the primary defense.
 
-**Root cause:** The prompt emphasizes parsimony ("fewer is better"), and the LLM interprets this as creating 8–12 broad themes.
+### P3: Coherence Gate Improvements `[resolved]`
+- **3a. Orphaned IC redistribution:** After dissolving a theme, redistributes ICs to nearest surviving theme by embedding similarity (min 0.5 threshold), or marks as unassigned.
+- **3b. Dissolved theme annotation:** Dissolved themes (0 ICs) excluded from coherence, distinctness, and normalized coherence computation.
+- **3c. Adaptive coherence threshold:** 0.90 for themes with <5 ICs, 1.0 for 5+ ICs. Configurable via `coherence_threshold` + `coherence_threshold_small`.
 
-**Fix:**
-- Remove parsimony framing from synthesizer prompt
-- Add explicit IC-count guidance: "Each theme should contain 3–6 ICs. A theme with 8+ ICs likely needs splitting."
-- Reference pipeline architecture: "Your themes will later be grouped into categories. Create mid-level themes that capture specific patterns of meaning, not broad domains."
-- Add: "Two themes can share the same domain (e.g., both about combat) if they describe distinct experiential phenomena."
-- Expected outcome: 15–20 themes for a 69-IC codebook instead of 10, feeding better into category synthesis
+### P4: New Metrics `[resolved]`
+- **IC Stability Index:** Cosine similarity between pre/post refinement embeddings. Mean stability + count of substantially rewritten ICs (<0.85).
+- **Orphaned IC Count:** Active ICs not assigned to any theme after dissolution.
+- **Thematic Coverage Ratio:** `quotes_in_themed_ICs / total_quotes`. Target >95%.
+- **Cross-Review Convergence:** Unique documents per IC. Reports confirmed (2+ docs) and strong convergence (3+ docs) ratios.
 
-**Downstream effects:** More themes → more pairs → distinctness metric becomes more informative. Coherence should improve per-theme. Category agent has real work to do.
-
----
-
-### P2: Meta-IC Filtering — YAML Configurable `[ready]`
-
-**Problem:** Current heuristic patterns (`biggest_disappointment`, `worst_game`, `game_of_the_year`) are domain-specific (game reviews). Won't generalize to healthcare, fintech, etc.
-
-**Fix:**
-- Move patterns to `eqd_config.yaml` under a `meta_ic_filter` section
-- Provide domain-agnostic defaults: `["overall_", "_verdict", "_summary_opinion", "overrated", "underrated"]`
-- Allow empty list (no heuristic filtering) — useful for first runs when user doesn't know what to exclude
-- Keep prompt rule #9 as the primary defense (domain-agnostic by design)
-- Users add domain-specific patterns as they learn their data
-
-**Config structure:**
-```yaml
-meta_ic_filter:
-  enabled: true
-  name_patterns: ["overall_", "_verdict", "_summary_opinion"]
-  definition_signals: ["overall experience", "general impression"]
-```
+### Model Upgrade `[resolved]`
+Synthesizer and category agents on Sonnet 4.5 (`claude-sonnet-4-5-20250929`). Coder and comparator on Haiku for cost efficiency.
 
 ---
 
-### P3: Coherence Gate Improvements `[ready]`
+## Current Sprint
 
-Three linked fixes:
+### S1: Sentiment Analysis at IC Creation `[ready]`
+**Problem:** Themes can contain a mix of positive and negative ICs, making them harder to interpret. "Combat Mechanics" might aggregate "combat is fluid" and "combat is broken" — analytically useless.
 
-**3a. Orphaned IC redistribution:** After dissolving a theme, redistribute its ICs to the next-closest theme by embedding similarity. If no theme exceeds a minimum similarity threshold (e.g., 0.5), park ICs in an explicit "Unassigned" section in the output. This prevents analytical data loss.
+**Fix:** Add `sentiment` field to `ICCandidate` (positive/negative/neutral/mixed). Assessed by the coder agent on the verbatim quote. New metric: **Theme Sentiment Purity** — dominant sentiment count / total ICs in theme. Flagged when purity < 0.70. Display per-theme sentiment distribution in pipeline output.
 
-**3b. Dissolved theme annotation in Layer 3:** Exclude dissolved themes from downstream coherence/distinctness display, or annotate them as `[dissolved]`. Currently a dissolved theme shows 2.56x normalized coherence (trivially coherent, 0 ICs) which is misleading.
+**Design:** Sentiment is a metric/signal, NOT a gate. Mixed-sentiment themes may be legitimate contested phenomena.
 
-**3c. Adaptive coherence threshold:** Scale threshold by IC count:
-- Themes with <5 ICs: threshold = 0.90 (lenient — small sample, high variance)
-- Themes with 5+ ICs: threshold = 1.0 (standard)
-- Configurable in YAML as `coherence_threshold` (base) + `coherence_threshold_small_theme` (override)
+### S2: Coder Agent Specificity Guidance `[ready]`
+**Problem:** Coder sometimes produces over-broad ICs like `gameplay_not_fun_overall`. But pushing too hard toward specificity would miss reviews that express general dissatisfaction without identifying specific causes.
 
----
+**Fix:** Add prompt guidance: "Be as specific as the text allows, no more. If the segment doesn't identify a specific system or feature, create an IC that captures the general nature of the experience — never fabricate specifics that aren't in the text." This gives explicit permission for general ICs when the text is general.
 
-### P4: New Metrics `[ready]`
+### S3: Negative Examples in All Agent Prompts `[ready]`
+**Problem:** Positive-only few-shot examples teach the LLM what to do but not where to stop. Negative examples define conceptual boundaries.
 
-**4a. Orphaned IC Count**
-After dissolution, count ICs not assigned to any theme. Simple: count ICs in codebook minus ICs in theme_ics table. Report as part of coherence gate results.
+**Fix per agent:**
+- **Coder:** Counter-examples for fabricated specificity, meta-commentary, wrong sentiment
+- **Comparator:** Counter-example for over-merging distinct phenomena that sound similar
+- **Synthesizer:** Counter-examples for mixed-sentiment themes and category-level groupings
 
-**4b. Thematic Coverage Ratio**
-What fraction of total quotes are reachable through the thematic structure? After dissolution, some quotes become orphaned (their IC has no theme). Formula: `quotes_in_themed_ICs / total_quotes`. Tells you how much evidence the themes actually account for. Target: >95%.
-
-**4c. IC Stability Index**
-Measures how much IC definitions changed during refinement. During `_refine_ic_definitions()`, capture old embedding before update, compute cosine similarity with new embedding after re-embedding. Per-IC drift score (1.0 = unchanged, 0.7 = major rewrite). Aggregate: mean stability across refined ICs, count of ICs with stability < 0.85 ("substantially rewritten"). Interpretation: high stability (~0.95+) = coder agent's initial extraction was precise, refinement is polish. Low stability (~0.80) = initial definitions were imprecise, refinement is corrective.
-
-**4d. Cross-Review Convergence**
-For each IC, count unique source documents (not segments) that contributed quotes. An IC confirmed by 8 reviews is robust; an IC from 1 review is unconfirmed. Report: mean docs-per-IC, % of ICs in 2+ docs ("confirmed ratio"), % in 3+ docs ("strong convergence"). This is an inter-rater reliability proxy — independent data sources arriving at the same concept. Requires joining quotes → segments → documents to trace provenance.
-
----
-
-### P5: Coder Agent Prompt Refinement `[design]`
-
-**Problem:** The coder sometimes produces ICs at inconsistent granularity — some very specific (`button_mapping_conflict_gameplay`), some very broad (`gameplay_not_fun_overall`). The broad ones end up as theme-level concepts polluting the codebook.
-
-**Fix ideas:**
-- Add explicit guidance: "Each IC should describe a single experiential phenomenon, not a domain. 'combat_feels_sluggish' is good. 'gameplay_not_fun_overall' is too broad — identify the specific aspects that aren't fun."
-- Add negative examples to the prompt showing over-broad vs. well-scoped ICs
-- Consider adding a post-extraction check: if an IC's definition contains multiple distinct complaints, flag for splitting
+Format: bad output → diagnosis → corrected output.
 
 ---
 
@@ -92,7 +60,7 @@ For each IC, count unique source documents (not segments) that contributed quote
 An LLM-powered interpretive layer that sits on top of the structured pipeline output. Takes the full results dict + thematic structure + quality metrics and produces a written analytical brief — the same analysis we've been doing manually in conversation.
 
 ### What it would do
-- **Metric interpretation:** Read all 12+ metrics, flag anomalies, explain what they mean in context of this specific dataset/run
+- **Metric interpretation:** Read all 16+ metrics, flag anomalies, explain what they mean in context of this specific dataset/run
 - **Structural diagnostics:** Identify magnet themes, weak coherence, orphaned ICs, saturation signals, catch-all categories
 - **Thematic interpretation:** For each theme, assess: is it well-defined? Does it have sufficient evidence? Are its ICs cohesive? Does the theme name accurately reflect its content?
 - **Comparative analysis:** If previous run results are available, compare across runs (codebook growth, theme stability, metric trends)
@@ -141,10 +109,42 @@ Re-synthesize themes from different analytical perspectives without re-running L
 
 ---
 
-## Other Ideas (Parking Lot)
+## Codebook Versioning `[design]`
 
-### Codebook Versioning
-Track codebook state across pipeline runs. When running on new data batches, load existing codebook and continue building. Currently the DB accumulation bug forces fresh DBs each time. Proper versioning would allow incremental analysis.
+### Vision
+Track codebook state across pipeline runs for longitudinal analysis. When the product evolves (patches, updates) and data accumulates over time, the analyst needs to compare codebooks across versions — not just run fresh each time.
+
+### Schema additions
+- `codebook_versions` table: `id`, `name` (e.g., "v1_launch_reviews"), `created_at`, `ic_count`, `notes`
+- `version_id` foreign key on `initial_codes` (`introduced_in_version`)
+- `last_seen_version` on `initial_codes` (tracks when an IC was last supported by evidence)
+- Run mode stored in config as a session parameter, not a permanent setting
+
+### UX design (action-based, not mode-based)
+Instead of asking users to declare a "mode" upfront — which is too abstract — the system uses two natural user actions:
+
+**Action 1: "Save codebook checkpoint"** — the analyst explicitly names and freezes the current codebook. This is a deliberate act with a meaningful name (e.g., "v1_launch_reviews"), not a technical operation.
+
+**Action 2: "Run on new data"** — when new data arrives, the pipeline asks one plain-language question: "Do you want to use your existing codebook as-is, or allow new codes to emerge from this data?" That single question derives the internal mode:
+
+- "Use as-is" → **Validation mode:** codebook is locked. New data only matches to existing ICs. Key output: coverage ratio (how much new data fits existing codebook) and gap analysis (segments that produced no matches).
+- "Allow new codes" → **Evolution mode:** core codebook is locked. New ICs are created in a separate "emerging" holding area. At sign-off, the analyst sees: "Your codebook had 38 ICs. This run encountered 5 segments that didn't fit any existing code. Here are the proposed new ICs — promote each to your core codebook or dismiss."
+- First run (no checkpoint exists) → **Discovery mode:** fully open codebook, current behaviour.
+
+### Session-start UX
+If the database already contains a named checkpoint, the pipeline opens with: "You have a saved codebook 'v1_launch_reviews' from [date] (38 ICs). Load it, or start fresh?" That's the only decision point. Everything else flows from there.
+
+### Longitudinal analytics (version diff report)
+Compare codebook v1 vs v2 across runs:
+- **IC frequency trends:** which ICs gain/lose evidence over time (quote count delta)
+- **IC lifecycle:** "confirmed" (present in all versions), "emerging" (new in latest), "declining" (fewer quotes), "deprecated" (no new evidence)
+- **Cross-version stability:** is this concept still being expressed in newer data? (Different from refinement stability — this asks about temporal stability)
+- **Theme evolution:** which themes persist, which fragment, which new ones emerge
+- **Practical value:** for a game getting patches, does `parkour_unresponsive` weaken in post-patch reviews? That's a direct measure of patch effectiveness.
+
+---
+
+## Other Ideas (Parking Lot)
 
 ### Quote Network Visualization
 Build a graph: ICs as nodes, edges weighted by quote co-occurrence (two ICs sharing quotes from the same segment). Visualize which concepts cluster in the raw data vs. how themes group them. Could reveal natural clustering that the synthesizer missed.
@@ -165,4 +165,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-02-21 — Session: 30-review run with meta-IC filter + coherence gate + Sonnet 4.5*
+*Last updated: 2026-02-22 — Session: sentiment analysis + negative examples + codebook versioning design*

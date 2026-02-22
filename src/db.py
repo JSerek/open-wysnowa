@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS verbatim_quotes (
     span_start              INTEGER NOT NULL,
     span_end                INTEGER NOT NULL,
     is_verified             INTEGER NOT NULL DEFAULT 0,
+    sentiment               TEXT,
     quote_embedding_json    TEXT,
     FOREIGN KEY (ic_id) REFERENCES initial_codes(id),
     FOREIGN KEY (segment_id) REFERENCES segments(id)
@@ -367,10 +368,11 @@ class VerbatimQuoteRepo:
             conn.execute(
                 """INSERT INTO verbatim_quotes
                    (id, ic_id, segment_id, quote_text, span_start, span_end,
-                    is_verified, quote_embedding_json)
-                   VALUES (?,?,?,?,?,?,?,?)""",
+                    is_verified, sentiment, quote_embedding_json)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
                 (vq.id, vq.ic_id, vq.segment_id, vq.quote_text,
                  vq.span_start, vq.span_end, int(vq.is_verified),
+                 vq.sentiment,
                  json.dumps(vq.quote_embedding_json) if vq.quote_embedding_json else None),
             )
 
@@ -404,6 +406,7 @@ class VerbatimQuoteRepo:
             id=row["id"], ic_id=row["ic_id"], segment_id=row["segment_id"],
             quote_text=row["quote_text"], span_start=row["span_start"],
             span_end=row["span_end"], is_verified=bool(row["is_verified"]),
+            sentiment=row["sentiment"] if row["sentiment"] else None,
             quote_embedding_json=emb,
         )
 

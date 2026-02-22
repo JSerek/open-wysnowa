@@ -377,6 +377,27 @@ Examples:
                   f"confirmed={conf:.1%} (2+ docs), "
                   f"strong={strong:.1%} (3+ docs)")
 
+        # Sentiment Purity
+        sent_purity = l3.get("sentiment_purity", {})
+        if sent_purity and sent_purity.get("per_theme"):
+            avg_p = sent_purity.get("avg_purity", 0)
+            flagged = sent_purity.get("flagged_count", 0)
+            flag_str = f"  ⚠ " if flagged > 0 else "  "
+            print(f"{flag_str}Sentiment purity: avg={avg_p:.2f} "
+                  f"({flagged} themes flagged <0.70)")
+            for tname, tdata in sent_purity.get("per_theme", {}).items():
+                p = tdata.get("purity", 0)
+                dom = tdata.get("dominant", "?")
+                dist = tdata.get("distribution", {})
+                total = tdata.get("total_with_sentiment", 0)
+                mark = "⚠ " if tdata.get("flagged") else "  "
+                if total > 0:
+                    print(f"    {mark}{p:.2f} ({dom})  {tname}  "
+                          f"[+{dist.get('positive', 0)} "
+                          f"-{dist.get('negative', 0)} "
+                          f"~{dist.get('neutral', 0)} "
+                          f"±{dist.get('mixed', 0)}]")
+
     # Category summary
     cat_results = results.get("categories", {})
     if cat_results and cat_results.get("categories_created", 0) > 0:
