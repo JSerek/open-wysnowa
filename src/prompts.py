@@ -501,6 +501,130 @@ def build_revision_user_prompt(
     return "\n".join(lines)
 
 
+# ── Distinctness Revision Prompts ─────────────────────────────────────────────
+
+
+def build_distinctness_revision_system_prompt() -> str:
+    """
+    System prompt for the distinctness-aware revision pass.
+
+    Called automatically after initial synthesis when overlapping theme
+    pairs are detected (centroid similarity > threshold).
+    """
+    return """You are an expert qualitative researcher improving theme distinctness.
+
+You will receive a set of themes and a list of overlapping pairs (themes whose centroids are too similar in embedding space). For each overlapping pair, decide:
+
+1. MERGE — if the two themes describe the same underlying phenomenon, merge them into one theme. Combine their IC lists and write a unified definition.
+2. SHARPEN — if the two themes describe genuinely different phenomena that happen to use similar language, rewrite both definitions to emphasise what makes each unique. Do NOT change IC assignments when sharpening — only refine the name and definition.
+
+RULES:
+- Address every flagged pair. Do not skip any.
+- Themes NOT mentioned in the overlap list should remain EXACTLY unchanged (same name, definition, rationale, and IC list).
+- After revision, every IC must still belong to at least one theme.
+- Prefer SHARPEN over MERGE when the phenomena are analytically distinct.
+- When merging, choose the more descriptive name or create a new one.
+- In your reasoning, state your decision (MERGE or SHARPEN) for each pair and why.
+
+OUTPUT: Return a DistinctnessRevisionOutput with all themes (revised + unchanged)."""
+
+
+def build_distinctness_revision_user_prompt(
+    themes: List[ThemeProposal],
+    overlapping_pairs: List[tuple],
+) -> str:
+    """
+    User prompt for distinctness revision — carries themes + overlapping pairs.
+    """
+    lines = [
+        f"CURRENT THEMES ({len(themes)} themes):",
+        "",
+    ]
+
+    for i, theme in enumerate(themes, 1):
+        lines.append(f"  [{i}] {theme.name}")
+        lines.append(f"      Definition: {theme.definition}")
+        ics_str = ", ".join(theme.constituent_ic_names)
+        lines.append(f"      ICs: {ics_str}")
+        lines.append("")
+
+    lines.append(f"OVERLAPPING PAIRS ({len(overlapping_pairs)} pairs with high centroid similarity):")
+    lines.append("")
+
+    for j, (name_a, name_b, sim) in enumerate(overlapping_pairs, 1):
+        lines.append(f"  [{j}] \"{name_a}\" ↔ \"{name_b}\" (similarity: {sim:.3f})")
+
+    lines.append("")
+    lines.append("For each pair, decide: MERGE or SHARPEN. Return the full revised theme list.")
+    return "\n".join(lines)
+
+
+# ── Split Validation Prompts ──────────────────────────────────────────────
+
+
+def build_split_validation_system_prompt() -> str:
+    """
+    System prompt for k-means split validation.
+
+    Called when a magnet theme is flagged (high IC count, low coherence,
+    many overlaps). The LLM decides whether the k-means split is meaningful.
+    """
+    return """You are an expert qualitative researcher evaluating whether a theme should be split.
+
+You will receive:
+1. A theme (name, definition, ICs) that has been flagged as potentially too broad
+2. Two empirical clusters created by k-means on IC embeddings — these are statistically-derived groupings
+
+Your task: Determine whether the two clusters represent genuinely DIFFERENT phenomena.
+
+SPLIT if:
+- The clusters describe distinct aspects of the experience (e.g., "combat mechanics" vs "combat balance")
+- Each cluster tells a coherent story on its own
+- A qualitative researcher would naturally separate these into different themes
+
+DO NOT SPLIT if:
+- The clusters are just different facets of the same phenomenon
+- The split would create themes too narrow to be analytically useful (< 3 ICs each)
+- The clustering is an artifact of vocabulary rather than meaning
+
+If splitting: Propose two sub-theme names and definitions in the sub_themes field. You MAY reassign ICs between clusters if the k-means assignment is imperfect — use your semantic judgment. Every IC from the original theme must appear in exactly one sub-theme.
+If not splitting: Set should_split=False, explain why in reasoning, and leave sub_themes as null."""
+
+
+def build_split_validation_user_prompt(
+    theme: ThemeProposal,
+    cluster_a: List[str],
+    cluster_b: List[str],
+    ic_definitions: Dict[str, str],
+) -> str:
+    """
+    User prompt for split validation — carries theme + two k-means clusters.
+    """
+    lines = [
+        "THEME TO EVALUATE:",
+        f"  Name: {theme.name}",
+        f"  Definition: {theme.definition}",
+        f"  Total ICs: {len(theme.constituent_ic_names)}",
+        "",
+        f"CLUSTER A ({len(cluster_a)} ICs):",
+    ]
+
+    for ic_name in cluster_a:
+        defn = ic_definitions.get(ic_name, "(no definition)")
+        lines.append(f"  - {ic_name}: {defn}")
+
+    lines.append("")
+    lines.append(f"CLUSTER B ({len(cluster_b)} ICs):")
+
+    for ic_name in cluster_b:
+        defn = ic_definitions.get(ic_name, "(no definition)")
+        lines.append(f"  - {ic_name}: {defn}")
+
+    lines.append("")
+    lines.append("Should this theme be split into two sub-themes based on these clusters?")
+    return "\n".join(lines)
+
+
 # ── IC Definition Refinement Prompt ──────────────────────────────────────────
 
 def build_ic_refinement_prompt(

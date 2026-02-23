@@ -26,6 +26,14 @@ Moved hardcoded patterns to `eqd_config.yaml` under `meta_ic_filter` section. De
 ### Model Upgrade `[resolved]`
 Synthesizer and category agents on Sonnet 4.5 (`claude-sonnet-4-5-20250929`). Coder and comparator on Haiku for cost efficiency.
 
+### S4: Distinctness-Aware Revision Pass `[resolved]`
+Post-synthesis step: compute pairwise theme centroid similarities, flag pairs above threshold (0.70), ask LLM to MERGE (same phenomenon) or SHARPEN (different phenomena, similar vocabulary). Runs on ThemeProposal objects before persistence. Configurable via `theme_refinement.distinctness_threshold` and `max_overlap_pairs` in `eqd_config.yaml`.
+
+### S4: Theme Splitting Heuristic (k-means + LLM) `[resolved]`
+Detect "magnet themes" meeting three criteria: IC count ≥ 8, raw coherence < 0.50, overlap pairs ≥ 3. Run pure-Python k-means (k=2, cosine distance, 3 restarts) on IC embeddings to produce candidate clusters. LLM validates whether the split is semantically meaningful or a statistical artifact. If approved, original theme replaced by two sub-themes. Configurable via `theme_refinement.split_min_ics`, `split_max_coherence`, `split_min_overlaps`.
+
+**Pipeline insertion point:** Both features run between `_run_layer2()` return and `persist_themes()` — distinctness revision first (may merge), then splitting (may split remaining magnets).
+
 ---
 
 ## Current Sprint
@@ -144,6 +152,20 @@ Compare codebook v1 vs v2 across runs:
 
 ---
 
+## Next Up
+
+### Segment Faithfulness Scoring `[design]`
+**Problem:** The pipeline drops candidates at span validation, but we don't know whether the coder agent is systematically hallucinating spans for certain types of text. A per-segment faithfulness score (verified_quotes / total_candidates) would reveal: (a) segments that consistently cause span errors, (b) whether certain text patterns (long sentences, slang, mixed language) cause more hallucination.
+
+**Architecture:** Computed during Layer 1 as a byproduct of span validation. Aggregated as a new metric in Layer 3. Could feed into a "segment difficulty" heuristic that triggers slower/more careful coding for hard segments.
+
+### Category Merge Threshold Tuning `[ready]`
+**Problem:** The 30-review test run merged "Core Gameplay Mechanics" + "World Design & Content Structure" at sim=0.867 with threshold 0.85. These are analytically distinct categories. The threshold is too aggressive.
+
+**Fix:** Raise `category_merge_threshold` from 0.85 to 0.90 in `eqd_config.yaml`. Consider making category merging HIL-gated (analyst confirms merges) rather than fully automated.
+
+---
+
 ## Other Ideas (Parking Lot)
 
 ### Quote Network Visualization
@@ -165,4 +187,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-02-22 — Session: sentiment analysis + negative examples + codebook versioning design*
+*Last updated: 2026-02-22 — Session: S4 distinctness revision + theme splitting heuristic*

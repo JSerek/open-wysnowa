@@ -46,6 +46,15 @@ class MetaICFilterConfig(BaseModel):
     definition_signals: List[str] = Field(default_factory=list)
 
 
+class ThemeRefinementConfig(BaseModel):
+    """Config for post-synthesis theme refinement (distinctness + splitting)."""
+    distinctness_threshold: float = 0.70       # pairs above this get revision
+    max_overlap_pairs: int = 10                # max pairs to address per pass
+    split_min_ics: int = 8                     # minimum ICs to consider splitting
+    split_max_coherence: float = 0.50          # raw coherence below this triggers split check
+    split_min_overlaps: int = 3                # minimum overlap pairs to trigger split
+
+
 class ProcessingConfig(BaseModel):
     batch_size: int = 15
     segments_per_coder_call: int = 5  # micro-batch: segments per LLM call
@@ -67,6 +76,7 @@ class EQDConfig(BaseModel):
     agents: Dict[str, AgentParams]
     study: StudyConfig
     processing: ProcessingConfig
+    theme_refinement: ThemeRefinementConfig = Field(default_factory=ThemeRefinementConfig)
 
 
 def load_config(config_path: Optional[Path] = None) -> EQDConfig:
@@ -91,10 +101,12 @@ def load_config(config_path: Optional[Path] = None) -> EQDConfig:
     }
     study = StudyConfig(**raw.get("study", {}))
     processing = ProcessingConfig(**raw.get("processing", {}))
+    theme_refinement = ThemeRefinementConfig(**raw.get("theme_refinement", {}))
 
     return EQDConfig(
         providers=providers, models=models, agents=agents,
         study=study, processing=processing,
+        theme_refinement=theme_refinement,
     )
 
 

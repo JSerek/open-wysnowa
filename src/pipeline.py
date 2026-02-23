@@ -137,6 +137,18 @@ class EQDPipeline:
         }
         logger.info(f"[PIPELINE] Layer 2 complete: {len(themes)} themes in {round_number} round(s)")
 
+        # ── Post-synthesis refinement (before persistence) ──────────
+        if themes:
+            pre_count = len(themes)
+            themes = self._run_distinctness_revision(themes)
+            themes = self._run_split_heuristic(themes)
+            post_count = len(themes)
+            results["layer2"]["themes_after_refinement"] = post_count
+            if post_count != pre_count:
+                logger.info(
+                    f"[PIPELINE] Theme refinement: {pre_count} → {post_count} themes"
+                )
+
         # Persist final themes
         if themes:
             persisted = self.synthesizer.persist_themes(themes, round_number)
@@ -512,6 +524,241 @@ class EQDPipeline:
                 )
 
         return redistributed, unassigned
+
+    # ── Post-Synthesis Refinement ─────────────────────────────────────────────
+
+    def _run_distinctness_revision(
+        self, themes: List[ThemeProposal]
+    ) -> List[ThemeProposal]:
+        """
+        Post-synthesis distinctness pass.
+
+        Compute pairwise theme centroid similarity, flag pairs above threshold,
+        then ask the LLM to MERGE or SHARPEN overlapping pairs.
+        """
+        cfg = self.config.theme_refinement
+        threshold = cfg.distinctness_threshold
+        max_pairs = cfg.max_overlap_pairs
+
+        # 1. Compute overlapping pairs (reuses existing _compute_live_distinctness)
+        all_overlaps = self._compute_live_distinctness(themes)
+
+        # Filter to threshold and limit
+        flagged = [(a, b, s) for a, b, s in all_overlaps if s > threshold]
+        flagged = sorted(flagged, key=lambda x: -x[2])[:max_pairs]
+
+        if not flagged:
+            logger.info("[DISTINCT] No overlapping pairs above threshold — skipping revision")
+            return themes
+
+        logger.info(f"[DISTINCT] {len(flagged)} overlapping pairs → LLM revision")
+        for a, b, s in flagged:
+            logger.info(f"[DISTINCT]   '{a}' ↔ '{b}' (sim={s:.3f})")
+
+        # 2. LLM revision
+        revised = self.synthesizer.revise_for_distinctness(themes, flagged)
+        if revised is None:
+            logger.warning("[DISTINCT] Revision failed — keeping original themes")
+            return themes
+
+        # 3. Log changes
+        old_names = {t.name for t in themes}
+        new_names = {t.name for t in revised}
+        merged = old_names - new_names
+        added = new_names - old_names
+        if merged:
+            logger.info(f"[DISTINCT] Removed/merged: {merged}")
+        if added:
+            logger.info(f"[DISTINCT] Added/renamed: {added}")
+
+        logger.info(f"[DISTINCT] {len(themes)} → {len(revised)} themes after revision")
+        return revised
+
+    def _run_split_heuristic(
+        self, themes: List[ThemeProposal]
+    ) -> List[ThemeProposal]:
+        """
+        Detect magnet themes and propose splits via k-means + LLM validation.
+
+        A theme is flagged as a "magnet" if it meets ALL of:
+          - IC count ≥ split_min_ics
+          - raw coherence < split_max_coherence
+          - overlap pair count ≥ split_min_overlaps
+        """
+        cfg = self.config.theme_refinement
+
+        # 1. Compute coherence + overlap count per theme
+        coherence = self._compute_live_coherence(themes)
+        overlaps = self._compute_live_distinctness(themes)
+
+        # Count overlaps per theme
+        overlap_count: Dict[str, int] = {}
+        for a, b, s in overlaps:
+            overlap_count[a] = overlap_count.get(a, 0) + 1
+            overlap_count[b] = overlap_count.get(b, 0) + 1
+
+        # 2. Flag magnet themes
+        flagged: List[ThemeProposal] = []
+        for theme in themes:
+            ic_count = len(theme.constituent_ic_names)
+            coh = coherence.get(theme.name, 1.0)
+            ovl = overlap_count.get(theme.name, 0)
+
+            if (ic_count >= cfg.split_min_ics
+                    and coh < cfg.split_max_coherence
+                    and ovl >= cfg.split_min_overlaps):
+                flagged.append(theme)
+                logger.info(
+                    f"[SPLIT] Flagged '{theme.name}' "
+                    f"(ICs={ic_count}, coherence={coh:.3f}, overlaps={ovl})"
+                )
+
+        if not flagged:
+            logger.info("[SPLIT] No magnet themes detected — skipping")
+            return themes
+
+        # 3. Get IC embeddings + definitions from DB
+        ic_repo = InitialCodeRepo(self.db)
+        active_ics = ic_repo.get_all_active()
+        name_to_emb: Dict[str, List[float]] = {}
+        name_to_def: Dict[str, str] = {}
+        for ic in active_ics:
+            if ic.embedding_json:
+                name_to_emb[ic.name] = ic.embedding_json
+                name_to_def[ic.name] = ic.definition
+
+        # 4. Process each flagged theme
+        result_themes = list(themes)
+        for theme in flagged:
+            # Filter to ICs with embeddings
+            valid_ics = [n for n in theme.constituent_ic_names if n in name_to_emb]
+            if len(valid_ics) < 4:  # need at least 2 per cluster
+                logger.info(
+                    f"[SPLIT] Skipping '{theme.name}' — only {len(valid_ics)} ICs with embeddings"
+                )
+                continue
+
+            # k-means split
+            cluster_a, cluster_b = self._kmeans_split(valid_ics, name_to_emb)
+
+            logger.info(
+                f"[SPLIT] k-means for '{theme.name}': "
+                f"cluster_a={len(cluster_a)} ICs, cluster_b={len(cluster_b)} ICs"
+            )
+
+            # LLM validation
+            validation = self.synthesizer.validate_split(
+                theme, cluster_a, cluster_b, name_to_def,
+            )
+
+            if validation is None:
+                logger.warning(f"[SPLIT] Validation failed for '{theme.name}' — keeping as-is")
+                continue
+
+            if not validation.should_split:
+                logger.info(
+                    f"[SPLIT] LLM rejected split for '{theme.name}': "
+                    f"{validation.reasoning[:150]}"
+                )
+                continue
+
+            if validation.sub_themes and len(validation.sub_themes) == 2:
+                # Replace original theme with two sub-themes
+                result_themes = [t for t in result_themes if t.name != theme.name]
+                for sub in validation.sub_themes:
+                    result_themes.append(ThemeProposal(
+                        name=sub.name,
+                        definition=sub.definition,
+                        rationale=f"Split from '{theme.name}': {validation.reasoning}",
+                        constituent_ic_names=sub.constituent_ic_names,
+                    ))
+                logger.info(
+                    f"[SPLIT] Split '{theme.name}' → "
+                    f"'{validation.sub_themes[0].name}' + "
+                    f"'{validation.sub_themes[1].name}'"
+                )
+
+        logger.info(f"[SPLIT] {len(themes)} → {len(result_themes)} themes after splitting")
+        return result_themes
+
+    def _kmeans_split(
+        self,
+        ic_names: List[str],
+        ic_embeddings: Dict[str, List[float]],
+        n_restarts: int = 3,
+        max_iter: int = 10,
+    ) -> tuple[List[str], List[str]]:
+        """
+        Split ICs into 2 clusters using k-means on embeddings (cosine distance).
+
+        Pure Python — no sklearn dependency.
+        Returns (cluster_a_names, cluster_b_names).
+        """
+        import random
+        from src.embeddings import cosine_similarity
+
+        embeddings = [ic_embeddings[name] for name in ic_names]
+        n = len(embeddings)
+        dim = len(embeddings[0])
+
+        best_assignment = None
+        best_inertia = float("inf")
+
+        for _ in range(n_restarts):
+            # Random init: pick 2 distinct ICs as centroids
+            idx = random.sample(range(n), 2)
+            centroids = [list(embeddings[idx[0]]), list(embeddings[idx[1]])]
+
+            assignment = [0] * n
+            for _ in range(max_iter):
+                # Assign each IC to nearest centroid (by cosine similarity)
+                new_assignment = []
+                for emb in embeddings:
+                    sim_0 = cosine_similarity(emb, centroids[0])
+                    sim_1 = cosine_similarity(emb, centroids[1])
+                    new_assignment.append(0 if sim_0 >= sim_1 else 1)
+
+                # Recompute centroids
+                new_centroids = [[0.0] * dim, [0.0] * dim]
+                counts = [0, 0]
+                for i, cluster_id in enumerate(new_assignment):
+                    counts[cluster_id] += 1
+                    for d in range(dim):
+                        new_centroids[cluster_id][d] += embeddings[i][d]
+
+                for c in range(2):
+                    if counts[c] > 0:
+                        new_centroids[c] = [v / counts[c] for v in new_centroids[c]]
+                    else:
+                        new_centroids[c] = list(centroids[c])  # keep old if empty
+
+                if new_assignment == assignment:
+                    assignment = new_assignment
+                    break
+                assignment = new_assignment
+                centroids = new_centroids
+
+            # Compute inertia (sum of cosine distances to assigned centroid)
+            inertia = sum(
+                1.0 - cosine_similarity(embeddings[i], centroids[assignment[i]])
+                for i in range(n)
+            )
+
+            if inertia < best_inertia:
+                best_inertia = inertia
+                best_assignment = assignment
+
+        # Split into two groups
+        cluster_a = [ic_names[i] for i in range(n) if best_assignment[i] == 0]
+        cluster_b = [ic_names[i] for i in range(n) if best_assignment[i] == 1]
+
+        # Ensure both clusters are non-empty (fallback)
+        if not cluster_a or not cluster_b:
+            mid = n // 2
+            cluster_a = ic_names[:mid]
+            cluster_b = ic_names[mid:]
+
+        return cluster_a, cluster_b
 
     def _run_category_synthesis(self) -> Dict[str, Any]:
         """

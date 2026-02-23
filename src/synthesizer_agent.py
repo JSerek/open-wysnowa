@@ -11,14 +11,16 @@ Model config: synthesizer_agent (claude_sonnet, temp 0.3, max 8000 tokens).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
 from src.db import Database, InitialCodeRepo, ThemeRepo, VerbatimQuoteRepo
 from src.models import (
+    DistinctnessRevisionOutput,
     RevisionOutput,
+    SplitValidationOutput,
     SynthesisOutput,
     Theme,
     ThemeFeedback,
@@ -26,8 +28,12 @@ from src.models import (
     ThemeProposal,
 )
 from src.prompts import (
+    build_distinctness_revision_system_prompt,
+    build_distinctness_revision_user_prompt,
     build_revision_system_prompt,
     build_revision_user_prompt,
+    build_split_validation_system_prompt,
+    build_split_validation_user_prompt,
     build_synthesizer_system_prompt,
     build_synthesizer_user_prompt,
 )
@@ -256,6 +262,154 @@ class SynthesizerAgent:
         return client.chat.completions.create(
             model=model_id,
             response_model=RevisionOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    # ── Distinctness Revision ─────────────────────────────────────────────
+
+    def revise_for_distinctness(
+        self,
+        themes: List[ThemeProposal],
+        overlapping_pairs: List[tuple],
+    ) -> Optional[List[ThemeProposal]]:
+        """
+        Revise themes to improve distinctness by sharpening or merging
+        overlapping pairs.
+
+        Args:
+            themes: current theme proposals
+            overlapping_pairs: list of (theme_a_name, theme_b_name, similarity)
+
+        Returns revised themes, or None on failure.
+        """
+        if not overlapping_pairs:
+            return themes
+
+        system_prompt = build_distinctness_revision_system_prompt()
+        user_prompt = build_distinctness_revision_user_prompt(themes, overlapping_pairs)
+
+        client, model_id, params = self.model_client.get_client("synthesizer_agent")
+
+        try:
+            result = self._call_distinctness_llm(
+                client=client,
+                model_id=model_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=params.temperature,
+                max_tokens=params.max_tokens,
+            )
+            logger.info(
+                f"[DISTINCT:REVISE] Revision complete: {len(result.themes)} themes. "
+                f"Reasoning: {result.reasoning[:200]}..."
+            )
+            return result.themes
+
+        except Exception as e:
+            logger.error(f"[ERROR] Distinctness revision failed: {e}")
+            return None
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    def _call_distinctness_llm(
+        self,
+        client: Any,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> DistinctnessRevisionOutput:
+        """Instructor-patched LLM call for distinctness revision."""
+        return client.chat.completions.create(
+            model=model_id,
+            response_model=DistinctnessRevisionOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    # ── Split Validation ──────────────────────────────────────────────────
+
+    def validate_split(
+        self,
+        theme: ThemeProposal,
+        cluster_a: List[str],
+        cluster_b: List[str],
+        ic_definitions: Dict[str, str],
+    ) -> Optional[SplitValidationOutput]:
+        """
+        Ask LLM whether a k-means split of a magnet theme is meaningful.
+
+        Args:
+            theme: the theme being evaluated for splitting
+            cluster_a: IC names in first cluster
+            cluster_b: IC names in second cluster
+            ic_definitions: {ic_name: definition} for all ICs
+
+        Returns SplitValidationOutput, or None on failure.
+        """
+        system_prompt = build_split_validation_system_prompt()
+        user_prompt = build_split_validation_user_prompt(
+            theme, cluster_a, cluster_b, ic_definitions,
+        )
+
+        client, model_id, params = self.model_client.get_client("synthesizer_agent")
+
+        try:
+            result = self._call_split_validation_llm(
+                client=client,
+                model_id=model_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=params.temperature,
+                max_tokens=params.max_tokens,
+            )
+            if result.should_split:
+                sub_names = [s.name for s in (result.sub_themes or [])]
+                logger.info(
+                    f"[SPLIT:VALIDATE] LLM approved split of '{theme.name}' → {sub_names}"
+                )
+            else:
+                logger.info(
+                    f"[SPLIT:VALIDATE] LLM rejected split of '{theme.name}': "
+                    f"{result.reasoning[:150]}"
+                )
+            return result
+
+        except Exception as e:
+            logger.error(f"[ERROR] Split validation failed for '{theme.name}': {e}")
+            return None
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    def _call_split_validation_llm(
+        self,
+        client: Any,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> SplitValidationOutput:
+        """Instructor-patched LLM call for split validation."""
+        return client.chat.completions.create(
+            model=model_id,
+            response_model=SplitValidationOutput,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

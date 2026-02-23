@@ -98,3 +98,12 @@ processing:
     enabled: true
     name_patterns: []      # domain-agnostic: empty by default. Add patterns like "overall_", "_verdict" for your domain
     definition_signals: []  # domain-agnostic: empty by default. Add signals like "overall experience" for your domain
+
+# ── THEME REFINEMENT ─────────────────────────────────────────────
+# Post-synthesis refinement: distinctness revision + theme splitting
+theme_refinement:
+  distinctness_threshold: 0.70       # centroid sim above this → flag for LLM revision
+  max_overlap_pairs: 10              # max pairs to address per pass
+  split_min_ics: 8                   # minimum ICs to consider splitting a theme
+  split_max_coherence: 0.50          # raw coherence below this triggers split check
+  split_min_overlaps: 3              # minimum overlap pairs (>0.70) to trigger split

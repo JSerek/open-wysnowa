@@ -415,6 +415,50 @@ class RevisionOutput(BaseModel):
     )
 
 
+# ── Layer 2: Post-Synthesis Refinement Models ─────────────────────────────
+
+
+class DistinctnessRevisionOutput(BaseModel):
+    """
+    LLM response for distinctness-aware revision pass.
+
+    The LLM receives overlapping theme pairs and decides to MERGE or SHARPEN each.
+    Returns the full revised theme list (revised + unchanged).
+    """
+    reasoning: str = Field(
+        min_length=10,
+        description="Brief explanation of merge/sharpen decisions for each flagged pair",
+    )
+    themes: List[ThemeProposal] = Field(min_length=1)
+
+
+class SplitProposal(BaseModel):
+    """One half of a proposed theme split."""
+    name: str = Field(min_length=1, max_length=80)
+    definition: str = Field(min_length=10, max_length=1000)
+    constituent_ic_names: List[str] = Field(min_length=1)
+
+
+class SplitValidationOutput(BaseModel):
+    """
+    LLM response for theme split validation.
+
+    The LLM evaluates whether a k-means split of a magnet theme is
+    semantically meaningful or just a statistical artifact.
+    """
+    should_split: bool = Field(
+        description="True if the split is meaningful, False if the theme should stay unified",
+    )
+    reasoning: str = Field(
+        min_length=10,
+        description="Why the split is or isn't meaningful",
+    )
+    sub_themes: Optional[List[SplitProposal]] = Field(
+        default=None,
+        description="Two sub-themes if should_split=True. Null if should_split=False.",
+    )
+
+
 class RefinedICOutput(BaseModel):
     """
     LLM response for IC definition refinement.
