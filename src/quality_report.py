@@ -190,6 +190,139 @@ def display_final_report(
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+# ── Layer 4: Analytical Brief ──────────────────────────────────────────────
+
+def display_analytical_brief(brief: Dict[str, Any]) -> None:
+    """
+    Display the Layer 4 analytical interpretation in the terminal.
+
+    Args:
+        brief: AnalyticalBrief.model_dump() dict with metrics, structure, synthesis.
+    """
+    print(f"\n{SEPARATOR}")
+    print(f"  LAYER 4: ANALYTICAL INTERPRETATION")
+    print(SEPARATOR)
+
+    # ── Metrics Assessment ──
+    metrics = brief.get("metrics", {})
+    assessments = metrics.get("assessments", [])
+    if assessments:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  METRICS ASSESSMENT")
+        for a in assessments:
+            status = a.get("status", "?").upper()
+            print(f"\n    {a.get('metric_name', '?')}: {a.get('observed_value', '?')} [{status}]")
+            print(f"      {a.get('interpretation', '')}")
+            ctx = a.get("context_factors")
+            if ctx:
+                print(f"      Context: {ctx}")
+
+    # ── Data Quality Summary ──
+    dqs = metrics.get("data_quality_summary", "")
+    if dqs:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  DATA QUALITY SUMMARY")
+        _print_wrapped(dqs, indent=4)
+
+    # ── Saturation ──
+    sat = metrics.get("saturation_assessment", "")
+    if sat:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  SATURATION ASSESSMENT")
+        _print_wrapped(sat, indent=4)
+
+    # ── Thematic Structure ──
+    structure = brief.get("structure", {})
+    strongest = structure.get("strongest_themes", [])
+    weakest = structure.get("weakest_themes", [])
+    if strongest or weakest:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  THEMATIC STRUCTURE")
+        if strongest:
+            print(f"    Strongest: {', '.join(strongest)}")
+        if weakest:
+            print(f"    Weakest:   {', '.join(weakest)}")
+
+    # Per-theme diagnostics
+    theme_diags = structure.get("theme_diagnostics", [])
+    if theme_diags:
+        print()
+        for td in theme_diags:
+            issue = td.get("issue_type", "healthy")
+            label = f" [{issue.upper()}]" if issue != "healthy" else ""
+            print(f"    {td.get('theme_name', '?')} ({td.get('ic_count', 0)} ICs){label}")
+            print(f"      {td.get('assessment', '')}")
+            action = td.get("suggested_action")
+            if action:
+                print(f"      Action: {action}")
+
+    # Structural summary
+    ss = structure.get("structural_summary", "")
+    if ss:
+        print(f"\n    Summary: {ss}")
+
+    # ── Overall Assessment ──
+    synthesis = brief.get("synthesis", {})
+    overall = synthesis.get("overall_assessment", "")
+    if overall:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  OVERALL ASSESSMENT")
+        _print_wrapped(overall, indent=4)
+
+    # ── Key Findings ──
+    findings = synthesis.get("key_findings", [])
+    if findings:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  KEY FINDINGS")
+        for i, f in enumerate(findings, 1):
+            print(f"    {i}. {f}")
+
+    # ── Recommendations ──
+    config_recs = synthesis.get("config_recommendations", [])
+    if config_recs:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  CONFIG RECOMMENDATIONS")
+        for rec in config_recs:
+            print(
+                f"    {rec.get('parameter', '?')}: "
+                f"{rec.get('current_value', '?')} -> {rec.get('suggested_value', '?')}"
+            )
+            print(f"      {rec.get('rationale', '')}")
+
+    next_steps = synthesis.get("next_steps", [])
+    if next_steps:
+        print(f"\n  NEXT STEPS")
+        for i, step in enumerate(next_steps, 1):
+            print(f"    {i}. {step}")
+
+    # ── Confidence Note ──
+    confidence = synthesis.get("confidence_note", "")
+    if confidence:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  CONFIDENCE NOTE")
+        _print_wrapped(confidence, indent=4)
+
+    print(f"\n{SEPARATOR}")
+
+
+def _print_wrapped(text: str, indent: int = 4, width: int = 80) -> None:
+    """Print text with indentation, wrapping long lines."""
+    prefix = " " * indent
+    words = text.split()
+    line = prefix
+    for word in words:
+        if len(line) + len(word) + 1 > width:
+            print(line)
+            line = prefix + word
+        else:
+            if line == prefix:
+                line += word
+            else:
+                line += " " + word
+    if line.strip():
+        print(line)
+
+
 def _mini_bar(value: float, max_val: float = 1.0, width: int = 15) -> str:
     """Generate a mini ASCII bar chart."""
     if max_val <= 0:

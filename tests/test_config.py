@@ -75,6 +75,7 @@ class TestModelClient:
     @patch.dict(os.environ, {
         "ANTHROPIC_API_KEY": "test-key-123",
         "OPENAI_API_KEY": "test-openai-key",
+        "GOOGLE_API_KEY": "test-key",
     })
     def test_init_validates_providers(self):
         config = load_config(CONFIG_PATH)
@@ -92,6 +93,7 @@ class TestModelClient:
     @patch.dict(os.environ, {
         "ANTHROPIC_API_KEY": "test-key",
         "OPENAI_API_KEY": "test-key",
+        "GOOGLE_API_KEY": "test-key",
     })
     def test_get_client_unknown_agent(self):
         config = load_config(CONFIG_PATH)
@@ -102,17 +104,19 @@ class TestModelClient:
     @patch.dict(os.environ, {
         "ANTHROPIC_API_KEY": "test-key",
         "OPENAI_API_KEY": "test-key",
+        "GOOGLE_API_KEY": "test-key",
     })
     def test_get_client_returns_tuple(self):
         config = load_config(CONFIG_PATH)
         mc = ModelClient(config)
         client, model_id, params = mc.get_client("coder_agent")
-        assert model_id == "claude-haiku-4-5-20251001"
+        assert model_id == "gemini-2.5-flash-lite"  # switched from claude-haiku
         assert params.temperature == 0.2
 
     @patch.dict(os.environ, {
         "ANTHROPIC_API_KEY": "test-key",
         "OPENAI_API_KEY": "test-key",
+        "GOOGLE_API_KEY": "test-key",
     })
     def test_get_embedding_client(self):
         config = load_config(CONFIG_PATH)

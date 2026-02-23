@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from src.config import AnalystGuidelinesConfig
 from src.models import InitialCode, ThemeFeedback, ThemeProposal
 
 
@@ -737,4 +738,390 @@ def build_category_user_prompt(
         lines.append("")
 
     lines.append("Group these themes into higher-order categories. Return a CategorySynthesisOutput.")
+    return "\n".join(lines)
+
+
+# ── Layer 4: Analyst Intelligence Prompts ────────────────────────────────
+
+
+def build_metrics_interpretation_system_prompt() -> str:
+    """System prompt for Call 1: metrics interpretation."""
+    return """You are a qualitative data analysis methodologist interpreting quality metrics from an automated thematic analysis pipeline (Braun & Clarke approach, LLM-assisted).
+
+Your task: interpret each metric value in context. For each metric, you receive:
+- The metric definition (what it measures and how)
+- A guideline range (NOT a pass/fail threshold — a reference for what's typical)
+- The observed value from this specific run
+
+Your interpretation should:
+1. State whether the value is within, near, or outside the guideline range
+2. Explain what this means for the quality of this specific analysis
+3. Consider contextual factors (sample size, data characteristics) that could explain the value
+4. Avoid binary good/bad judgments — frame as "healthy", "worth monitoring", or "worth investigating"
+
+Use the status field:
+- "healthy" = within guideline range, no concerns
+- "monitor" = borderline or slightly outside range, not alarming but worth noting
+- "investigate" = clearly outside range, may indicate a real issue
+
+IMPORTANT: These guidelines are calibration references, not rules. A value outside the guideline range is not automatically a problem — it may reflect the specific characteristics of this dataset. Your job is to interpret, not to judge."""
+
+
+def build_metrics_interpretation_user_prompt(
+    results: Dict,
+    guidelines: AnalystGuidelinesConfig,
+    run_summary: Dict,
+) -> str:
+    """
+    User prompt for Call 1: carries metric values + guidelines.
+
+    Args:
+        results: results["layer3"] dict with all quality metrics
+        guidelines: AnalystGuidelinesConfig with reference ranges
+        run_summary: dict with n_documents, n_segments, n_ics
+    """
+    n_docs = run_summary.get('n_documents', '?')
+    n_segs = run_summary.get('n_segments', '?')
+    n_ics  = run_summary.get('n_ics', '?')
+    n_themes = run_summary.get('n_themes', 0)
+    n_cats = run_summary.get('n_categories', 0)
+
+    lines = [
+        f"Here are the quality metrics from a COMPLETE pipeline run.",
+        f"Dataset: {n_docs} documents, {n_segs} segments, {n_ics} active ICs.",
+    ]
+
+    # Explicit run-stage context so the LLM knows synthesis IS done
+    if n_themes:
+        lines.append(
+            f"Run stage: COMPLETE — all layers finished. "
+            f"{n_themes} themes synthesized into {n_cats} categories. "
+            f"All metrics below reflect the final state."
+        )
+    lines += [
+        "",
+        "── METRIC DEFINITIONS AND GUIDELINES ──",
+        guidelines.to_prompt_block(),
+        "",
+        "── OBSERVED VALUES ──",
+    ]
+
+    # Grounding
+    grounding = results.get("grounding", {})
+    if grounding:
+        lines.append(f"grounding_rate: {grounding.get('grounding_rate', 'N/A')}")
+
+    # Drop rate (passed in run_summary since it comes from layer1, not layer3)
+    drop_r = run_summary.get("drop_rate")
+    if drop_r is not None:
+        lines.append(f"drop_rate: {drop_r}")
+
+    # Extraction density
+    extraction = results.get("extraction_density", {})
+    dist = extraction.get("distribution", {}) if isinstance(extraction, dict) else {}
+    if dist:
+        lines.append(f"extraction_density_mean: {dist.get('mean', 'N/A')}")
+
+    # IC concentration
+    ic_conc = results.get("ic_concentration", {})
+    if ic_conc:
+        lines.append(f"singleton_ratio: {ic_conc.get('singleton_ratio', 'N/A')}")
+
+    # Merge rate — both overall and final batch for context
+    merge = results.get("merge_rate", {})
+    if merge:
+        per_batch = merge.get("per_batch", [])
+        overall = merge.get("overall_rate", "N/A")
+        lines.append(f"merge_rate_overall: {overall}")
+        if per_batch:
+            lines.append(f"merge_rate_final_batch: {per_batch[-1]}")
+
+    # Triage efficiency
+    triage = results.get("triage_efficiency", {})
+    if triage:
+        lines.append(f"triage_auto_rate: {triage.get('efficiency', 'N/A')}")
+
+    # ITS
+    its_history = results.get("its_history", [])
+    if its_history:
+        last_its = its_history[-1]
+        its_val = last_its.its_value if hasattr(last_its, 'its_value') else last_its.get('its_value', 'N/A')
+        lines.append(f"its_final: {its_val}")
+
+    # Theme coherence — flat dict {theme_name: float}, compute avg
+    coherence = results.get("theme_coherence", {})
+    if isinstance(coherence, dict) and coherence:
+        coh_vals = [v for v in coherence.values() if isinstance(v, (int, float))]
+        if coh_vals:
+            coh_mean = sum(coh_vals) / len(coh_vals)
+            lines.append(f"theme_coherence_mean: {coh_mean:.3f}")
+
+    # Theme distinctness — list of [theme_a, theme_b, sim], compute avg + overlap count
+    distinctness = results.get("theme_distinctness", [])
+    if isinstance(distinctness, list) and distinctness:
+        sims = [row[2] for row in distinctness if isinstance(row, (list, tuple)) and len(row) >= 3]
+        if sims:
+            avg_sim = sum(sims) / len(sims)
+            overlap_count = sum(1 for s in sims if s > 0.70)
+            lines.append(f"theme_distinctness_avg_sim: {avg_sim:.3f}")
+            lines.append(f"theme_distinctness_overlapping_pairs: {overlap_count}")
+
+    # Sentiment purity
+    sentiment = results.get("sentiment_purity", {})
+    if isinstance(sentiment, dict):
+        lines.append(f"sentiment_purity_mean: {sentiment.get('avg_purity', 'N/A')}")
+        flagged = sentiment.get("flagged_count")
+        if flagged is not None:
+            lines.append(f"sentiment_purity_flagged_themes: {flagged}")
+
+    # Thematic coverage
+    coverage = results.get("thematic_coverage", {})
+    if isinstance(coverage, dict):
+        lines.append(f"thematic_coverage: {coverage.get('coverage_ratio', 'N/A')}")
+
+    # Cross-review convergence
+    convergence = results.get("cross_review_convergence", {})
+    if isinstance(convergence, dict):
+        lines.append(f"cross_review_convergence: {convergence.get('confirmed_ratio', 'N/A')}")
+
+    # IC stability
+    stability = results.get("ic_stability", {})
+    if isinstance(stability, dict):
+        lines.append(f"ic_stability_mean: {stability.get('mean_stability', 'N/A')}")
+
+    # Additional context
+    lines.append("")
+    lines.append("── ADDITIONAL CONTEXT ──")
+    if merge and merge.get("per_batch"):
+        lines.append(f"Batch merge rate progression: {merge['per_batch']}")
+    if its_history:
+        recent = its_history[-3:] if len(its_history) >= 3 else its_history
+        its_vals = [
+            h.its_value if hasattr(h, 'its_value') else h.get('its_value', 0)
+            for h in recent
+        ]
+        lines.append(f"ITS history (last {len(recent)} batches): {its_vals}")
+
+    lines.append("")
+    lines.append("Interpret each metric and provide an overall data quality assessment.")
+    return "\n".join(lines)
+
+
+def build_structural_diagnostics_system_prompt() -> str:
+    """System prompt for Call 2: structural diagnostics."""
+    return """You are a qualitative data analyst evaluating the thematic structure produced by an automated Braun & Clarke thematic analysis pipeline.
+
+You receive the full Category → Theme → IC hierarchy with evidence counts and coherence data.
+Your task: assess the quality and coherence of this structure.
+
+TIERED ASSESSMENT — use different detail levels:
+
+HEALTHY themes (coherence ≥0.55, sufficient evidence, no issues):
+  → One-line assessment only: "Well-evidenced, coherent, no action needed."
+  Do NOT write paragraphs for healthy themes.
+
+FLAGGED themes (low coherence, low evidence, magnet, sentiment mixed):
+  → Full assessment paragraph + concrete suggested_action.
+  Explain what's wrong, why, and what to do about it.
+
+For flagged themes, evaluate:
+1. Is the theme well-defined? Does the name accurately capture its ICs?
+2. Is there sufficient evidence (quote count)?
+3. Are the ICs cohesive (do they belong together)?
+4. Is there a sentiment mixing issue?
+5. Is this a "magnet theme" (too many unrelated ICs, low coherence)?
+
+For each category, evaluate:
+1. Do the themes within it form a coherent grouping?
+2. Is the category too broad (catch-all) or too narrow (single theme)?
+
+Identify the strongest themes (well-evidenced, coherent, clearly defined) and weakest themes (sparse evidence, low coherence, unclear boundaries).
+
+IMPORTANT: Be concise. The structural_summary at the end should highlight only the most critical structural issues and 2-3 top recommendations. Do not repeat individual theme assessments."""
+
+
+def build_structural_diagnostics_user_prompt(
+    thematic_structure: List[Dict],
+    layer2_results: Dict,
+    coherence_data: Dict,
+) -> str:
+    """
+    User prompt for Call 2: carries thematic structure + coherence data.
+
+    Args:
+        thematic_structure: results["thematic_structure"] — category/theme/IC hierarchy
+        layer2_results: results["layer2"] with synthesis stats
+        coherence_data: coherence and distinctness metrics from layer3
+    """
+    lines = ["── THEMATIC STRUCTURE ──", ""]
+
+    for cat in thematic_structure:
+        cat_name = cat.get("name", "Unknown")
+        cat_def = cat.get("definition", "")
+        lines.append(f"CATEGORY: {cat_name} ({cat_def})")
+
+        for theme in cat.get("themes", []):
+            t_name = theme.get("name", "Unknown")
+            t_def = theme.get("definition", "")
+            lines.append(f"  THEME: {t_name} ({t_def})")
+
+            # Per-theme coherence if available
+            # theme_coherence is a flat {theme_name: float} dict — no "per_theme" nesting
+            per_theme_coh = coherence_data.get("theme_coherence", {})
+            if t_name in per_theme_coh:
+                lines.append(f"    Coherence: {per_theme_coh[t_name]:.3f}")
+
+            # Per-theme sentiment purity if available
+            # sentiment_purity["per_theme"][name] is a dict {purity, dominant, ...} — extract float
+            per_theme_sent = coherence_data.get("sentiment_purity", {}).get("per_theme", {})
+            if t_name in per_theme_sent:
+                sent_entry = per_theme_sent[t_name]
+                purity_val = sent_entry["purity"] if isinstance(sent_entry, dict) else sent_entry
+                lines.append(f"    Sentiment purity: {purity_val:.3f}")
+
+            ics = theme.get("initial_codes", [])
+            lines.append(f"    ICs ({len(ics)}):")
+            for ic in ics:
+                ic_name = ic.get("name", "?")
+                ic_def = ic.get("definition", "")
+                qcount = ic.get("quote_count", 0)
+                lines.append(f"      - {ic_name}: {ic_def} [{qcount} quotes]")
+
+                # Include up to 2 example quotes (truncated)
+                quotes = ic.get("quotes", [])
+                for q in quotes[:2]:
+                    q_text = q.get("quote_text", "")[:100]
+                    lines.append(f"        Example: \"{q_text}\"")
+
+            lines.append("")
+
+    # Layer 2 summary
+    lines.append("── LAYER 2 SUMMARY ──")
+    lines.append(f"Themes proposed: {layer2_results.get('themes_proposed', '?')}")
+    lines.append(f"Themes after refinement: {layer2_results.get('themes_after_refinement', '?')}")
+    dissolved = layer2_results.get("dissolved_theme_names", [])
+    if dissolved:
+        lines.append(f"Themes dissolved (coherence gate): {', '.join(dissolved)}")
+    lines.append(f"ICs redistributed: {layer2_results.get('ics_redistributed', 0)}")
+    lines.append(f"ICs unassigned: {layer2_results.get('ics_unassigned', 0)}")
+
+    # Coherence details — theme_coherence is flat {theme_name: float}
+    lines.append("")
+    lines.append("── COHERENCE DETAILS ──")
+    per_theme_coh = coherence_data.get("theme_coherence", {})
+    if per_theme_coh:
+        # Guard: skip non-numeric values (defensive against nested dicts)
+        numeric_items = [(k, v) for k, v in per_theme_coh.items() if isinstance(v, (int, float))]
+        for name, score in sorted(numeric_items, key=lambda x: x[1]):
+            lines.append(f"  {name}: {score:.3f}")
+
+    distinctness = coherence_data.get("theme_distinctness", {})
+    overlap_pairs = distinctness.get("overlapping_pairs", []) if isinstance(distinctness, dict) else []
+    if overlap_pairs:
+        lines.append("")
+        lines.append(f"Overlapping theme pairs ({len(overlap_pairs)}):")
+        for pair in overlap_pairs[:10]:  # limit to top 10
+            if isinstance(pair, (list, tuple)) and len(pair) >= 3:
+                lines.append(f"  \"{pair[0]}\" ↔ \"{pair[1]}\" (sim={pair[2]:.3f})")
+
+    lines.append("")
+    lines.append("Assess the thematic structure. Be specific about each theme.")
+    return "\n".join(lines)
+
+
+def build_analyst_synthesis_system_prompt() -> str:
+    """System prompt for Call 3: synthesis and recommendations."""
+    return """You are a senior research methodologist providing final recommendations for a qualitative data analysis pipeline run.
+
+You receive:
+1. A metrics interpretation (from a colleague who analysed the quality metrics)
+2. A structural diagnostics report (from a colleague who analysed the thematic structure)
+3. The pipeline configuration used for this run
+
+Your task: synthesise these into actionable guidance.
+
+CRITICAL: DO NOT repeat or restate information from the metrics or structural reports. The user has already read those. Your job is to SYNTHESISE — find insights that only emerge when combining both perspectives.
+
+Output structure:
+
+1. overall_assessment (3-5 sentences MAX): Headline verdict on the run's quality and trustworthiness. Do NOT re-list individual metric values — the user has them. State the conclusion, not the evidence.
+
+2. key_findings (3-5 items): Only insights that emerge from COMBINING metrics + structure. Bad: "singleton ratio is 57%" (that's just restating a metric). Good: "High singleton ratio combined with catch-all categories suggests the pipeline is creating narrow ICs that don't aggregate well — the issue is triage thresholds, not data volume."
+
+3. config_recommendations: Specific parameter changes with rationale. Each entry should name the parameter, its current value, a suggested value, and a brief rationale.
+
+4. next_steps (3-5 items, priority-ordered): Concrete actions. Interleave config changes with analytical actions. Each step should be actionable in one work session.
+
+5. confidence_note (2-3 sentences MAX): What caveats should the analyst keep in mind? Do NOT repeat the overall assessment.
+
+Be concrete and actionable. Avoid vague recommendations. The entire synthesis should be substantially SHORTER than the metrics + structural reports combined."""
+
+
+def build_analyst_synthesis_user_prompt(
+    metrics_interp: Dict,
+    structural_diag: Dict,
+    config_summary: Dict,
+    run_summary: Dict,
+) -> str:
+    """
+    User prompt for Call 3: carries outputs of Call 1 + Call 2 + config.
+
+    Args:
+        metrics_interp: MetricsInterpretation.model_dump()
+        structural_diag: StructuralDiagnostics.model_dump()
+        config_summary: relevant config values
+        run_summary: pipeline run summary
+    """
+    lines = ["── METRICS INTERPRETATION ──", ""]
+
+    # Format metrics assessments
+    for assessment in metrics_interp.get("assessments", []):
+        status = assessment.get("status", "?").upper()
+        lines.append(
+            f"  {assessment.get('metric_name', '?')}: "
+            f"{assessment.get('observed_value', '?')} [{status}]"
+        )
+        lines.append(f"    {assessment.get('interpretation', '')}")
+        ctx = assessment.get("context_factors")
+        if ctx:
+            lines.append(f"    Context: {ctx}")
+
+    lines.append("")
+    lines.append(f"Data quality summary: {metrics_interp.get('data_quality_summary', 'N/A')}")
+    lines.append(f"Saturation assessment: {metrics_interp.get('saturation_assessment', 'N/A')}")
+
+    lines.append("")
+    lines.append("── STRUCTURAL DIAGNOSTICS ──")
+    lines.append("")
+    lines.append(f"Strongest themes: {structural_diag.get('strongest_themes', [])}")
+    lines.append(f"Weakest themes: {structural_diag.get('weakest_themes', [])}")
+    lines.append("")
+
+    for diag in structural_diag.get("theme_diagnostics", []):
+        issue = diag.get("issue_type", "healthy")
+        lines.append(
+            f"  {diag.get('theme_name', '?')} ({diag.get('ic_count', 0)} ICs) — {issue}"
+        )
+        lines.append(f"    {diag.get('assessment', '')}")
+        action = diag.get("suggested_action")
+        if action:
+            lines.append(f"    Action: {action}")
+
+    lines.append("")
+    lines.append(f"Structural summary: {structural_diag.get('structural_summary', 'N/A')}")
+
+    # Config
+    lines.append("")
+    lines.append("── CURRENT CONFIGURATION ──")
+    for k, v in config_summary.items():
+        lines.append(f"  {k}: {v}")
+
+    # Run summary
+    lines.append("")
+    lines.append("── RUN SUMMARY ──")
+    for k, v in run_summary.items():
+        lines.append(f"  {k}: {v}")
+
+    lines.append("")
+    lines.append("Synthesise the analysis and provide concrete recommendations.")
     return "\n".join(lines)

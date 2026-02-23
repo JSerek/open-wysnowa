@@ -476,3 +476,136 @@ class RefinedICOutput(BaseModel):
         min_length=3,
         description="Brief note on what changed and why",
     )
+
+
+# ── Layer 4: Analyst Intelligence Models ─────────────────────────────────
+
+
+class MetricAssessment(BaseModel):
+    """Assessment of a single quality metric."""
+    metric_name: str = Field(description="Metric identifier, e.g. 'grounding_rate'")
+    observed_value: str = Field(description="Formatted value, e.g. '96.2%', '28/120 pairs'")
+    status: str = Field(
+        description="healthy=within guidelines, monitor=borderline, investigate=outside guidelines",
+    )
+    interpretation: str = Field(
+        min_length=20, max_length=500,
+        description="What this value means in context of this specific run",
+    )
+    context_factors: Optional[str] = Field(
+        default=None, max_length=300,
+        description="Factors that might explain the value (sample size, data characteristics, etc.)",
+    )
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        allowed = {"healthy", "monitor", "investigate"}
+        if v not in allowed:
+            raise ValueError(f"status must be one of {allowed}, got '{v}'")
+        return v
+
+
+class MetricsInterpretation(BaseModel):
+    """Output of Call 1: metrics interpretation."""
+    assessments: List[MetricAssessment] = Field(min_length=1)
+    data_quality_summary: str = Field(
+        min_length=50, max_length=800,
+        description="Overall assessment of data integrity and codebook health",
+    )
+    saturation_assessment: str = Field(
+        min_length=50, max_length=500,
+        description="Is the codebook saturated? Should we process more data?",
+    )
+
+
+class ThemeDiagnostic(BaseModel):
+    """Diagnostic for a single theme."""
+    theme_name: str
+    ic_count: int
+    coherence: Optional[float] = None
+    issue_type: Optional[str] = Field(default="healthy")
+    assessment: str = Field(min_length=20, max_length=500)
+    suggested_action: Optional[str] = Field(
+        default=None, max_length=200,
+        description="Specific action if issue detected",
+    )
+
+    @field_validator("issue_type")
+    @classmethod
+    def validate_issue_type(cls, v: Optional[str]) -> Optional[str]:
+        allowed = {
+            "magnet_theme", "weak_coherence", "low_evidence",
+            "naming_unclear", "sentiment_mixed", "healthy", None,
+        }
+        if v not in allowed:
+            raise ValueError(f"issue_type must be one of {allowed}, got '{v}'")
+        return v
+
+
+class CategoryDiagnostic(BaseModel):
+    """Diagnostic for a category grouping."""
+    category_name: str
+    theme_count: int
+    assessment: str = Field(min_length=20, max_length=300)
+    potential_issue: Optional[str] = Field(default="healthy")
+
+    @field_validator("potential_issue")
+    @classmethod
+    def validate_potential_issue(cls, v: Optional[str]) -> Optional[str]:
+        allowed = {"too_broad", "single_theme", "misaligned_themes", "healthy", None}
+        if v not in allowed:
+            raise ValueError(f"potential_issue must be one of {allowed}, got '{v}'")
+        return v
+
+
+class StructuralDiagnostics(BaseModel):
+    """Output of Call 2: structural analysis."""
+    theme_diagnostics: List[ThemeDiagnostic] = Field(min_length=1)
+    category_diagnostics: List[CategoryDiagnostic] = Field(default_factory=list)
+    strongest_themes: List[str] = Field(
+        description="Top themes by evidence quality + coherence",
+    )
+    weakest_themes: List[str] = Field(
+        description="Themes needing attention",
+    )
+    structural_summary: str = Field(
+        min_length=50, max_length=1000,
+        description="Overall assessment of the thematic structure",
+    )
+
+
+class ConfigRecommendation(BaseModel):
+    """A specific configuration change suggestion."""
+    parameter: str = Field(description="YAML config key, e.g. 'processing.category_merge_threshold'")
+    current_value: str
+    suggested_value: str
+    rationale: str = Field(min_length=20, max_length=300)
+
+
+class AnalystSynthesis(BaseModel):
+    """Output of Call 3: synthesis and recommendations."""
+    overall_assessment: str = Field(
+        min_length=100, max_length=2000,
+        description="Integrative assessment of the full analysis — what did we learn?",
+    )
+    key_findings: List[str] = Field(
+        min_length=1,
+        description="Most important takeaways, ordered by significance",
+    )
+    config_recommendations: List[ConfigRecommendation] = Field(default_factory=list)
+    next_steps: List[str] = Field(
+        min_length=1,
+        description="Prioritised actions: what should the analyst do next?",
+    )
+    confidence_note: str = Field(
+        min_length=20, max_length=500,
+        description="Caveats: sample size, saturation status, known limitations of this run",
+    )
+
+
+class AnalyticalBrief(BaseModel):
+    """Full Layer 4 output — container for all three call results."""
+    metrics: MetricsInterpretation
+    structure: StructuralDiagnostics
+    synthesis: AnalystSynthesis

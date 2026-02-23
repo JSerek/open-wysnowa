@@ -28,6 +28,12 @@ providers:
     api_key_env: LMSTUDIO_API_KEY
     base_url: http://localhost:1234/v1
 
+  google:
+    type: openai_compatible
+    api_key_env: GOOGLE_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    instructor_mode: json  # Required: Gemini fails with tool-call mode for List fields
+
 # ── NAMED MODELS ──────────────────────────────────────────────────
 models:
   gpt4o_mini:
@@ -46,6 +52,22 @@ models:
     provider: ollama
     model_id: llama3.1:70b
 
+  gemini_flash:
+    provider: google
+    model_id: gemini-2.0-flash
+
+  gemini_flash_3_preview:
+    provider: google
+    model_id: gemini-3-flash-preview
+
+  gemini_flash_lite:
+    provider: google
+    model_id: gemini-2.5-flash-lite  # non-thinking, fast, cheaper
+
+  gemini_pro:
+    provider: google
+    model_id: gemini-2.5-pro-preview-05-06
+
   embed_openai:
     provider: openai
     model_id: text-embedding-3-small
@@ -54,7 +76,7 @@ models:
 # TEST CONFIG: All LLM agents on Haiku 4.5 (cheapest)
 agents:
   coder_agent:
-    model: claude_haiku
+    model: gemini_flash_lite        # non-thinking Gemini; uses JSON mode (see google provider)
     temperature: 0.2
     max_tokens: 4000
 
@@ -72,6 +94,11 @@ agents:
     model: claude_sonnet
     temperature: 0.2
     max_tokens: 16000  # extended output beta required for Claude (sent automatically)
+
+  analyst_agent:
+    model: claude_sonnet
+    temperature: 0.3
+    max_tokens: 16000
 
   embedding:
     model: embed_openai
@@ -107,3 +134,84 @@ theme_refinement:
   split_min_ics: 8                   # minimum ICs to consider splitting a theme
   split_max_coherence: 0.50          # raw coherence below this triggers split check
   split_min_overlaps: 3              # minimum overlap pairs (>0.70) to trigger split
+
+# ── ANALYST GUIDELINES ──────────────────────────────────────────
+# Reference ranges for Layer 4 metric interpretation.
+# These are guidelines, not gates. The LLM uses them to contextualise
+# metric values, not to make pass/fail decisions.
+analyst_guidelines:
+  grounding_rate:
+    healthy_min: 0.95
+    description: "Proportion of verbatim quotes whose spans exactly match the source text"
+    what_it_measures: "Whether the coder agent is hallucinating quote boundaries"
+    low_means: "The coder is generating quotes that don't match the source text — check span validation"
+
+  drop_rate:
+    healthy_max: 0.15
+    description: "Proportion of LLM-proposed IC candidates dropped due to span validation failure"
+    what_it_measures: "How often the coder proposes quotes with incorrect character offsets"
+    high_means: "The coder is frequently hallucinating span positions — may indicate prompt issues or difficult text"
+
+  extraction_density_mean:
+    healthy_min: 0.30
+    healthy_max: 0.80
+    description: "Mean fraction of segment text covered by IC quotes (character-level)"
+    what_it_measures: "How much of each segment's content is being captured by IC extraction"
+    low_means: "Large portions of text are being ignored — possible missed phenomena"
+    high_means: "Nearly all text is being coded — check for over-extraction or trivial ICs"
+
+  singleton_ratio:
+    healthy_max: 0.30
+    description: "Proportion of active ICs with only 1 supporting quote"
+    what_it_measures: "Evidence concentration — are ICs well-supported or one-off observations?"
+    high_means: "Many ICs have minimal evidence — possible over-splitting or premature IC creation"
+
+  merge_rate_final:
+    healthy_min: 0.40
+    healthy_max: 0.80
+    description: "Proportion of new candidates merged into existing ICs (final batches)"
+    what_it_measures: "Codebook maturity — higher merge rate suggests the codebook is stabilising"
+    low_means: "Codebook is still growing rapidly — may need more data before thematic synthesis"
+    high_means: "Very few new concepts emerging — codebook may be saturated"
+
+  triage_auto_rate:
+    healthy_min: 0.60
+    description: "Proportion of triage decisions made automatically (high-confidence)"
+    what_it_measures: "How often the embedding similarity gives a clear signal"
+    low_means: "Many grey-zone cases — thresholds may need tuning or ICs are poorly differentiated"
+
+  its_final:
+    healthy_max: 0.05
+    description: "Incremental Type Saturation — fraction of new ICs in the last batch"
+    what_it_measures: "Whether new concepts are still emerging from the data"
+    high_means: "New concepts still emerging — more data needed before the codebook is stable"
+
+  theme_coherence_mean:
+    healthy_min: 0.55
+    description: "Mean intra-theme IC embedding similarity"
+    what_it_measures: "How semantically similar the ICs within each theme are"
+    low_means: "Themes may be grouping unrelated concepts — consider splitting or reorganising"
+
+  theme_distinctness_overlap_ratio:
+    healthy_max: 0.25
+    description: "Proportion of theme pairs with centroid similarity > 0.70"
+    what_it_measures: "How much themes overlap with each other"
+    high_means: "Many overlapping themes — consider merging similar themes or sharpening definitions"
+
+  sentiment_purity_mean:
+    healthy_min: 0.80
+    description: "Mean dominant-sentiment ratio per theme"
+    what_it_measures: "Whether themes mix positive and negative evidence"
+    low_means: "Themes contain mixed sentiment — may be analytically confusing"
+
+  thematic_coverage:
+    healthy_min: 0.90
+    description: "Proportion of quotes belonging to ICs that are assigned to themes"
+    what_it_measures: "How much evidence is captured in the thematic structure"
+    low_means: "Significant evidence is outside the thematic structure — orphaned ICs need attention"
+
+  cross_review_convergence:
+    healthy_min: 0.50
+    description: "Proportion of ICs with evidence from 2+ different documents"
+    what_it_measures: "Whether ICs represent cross-document patterns vs single-document artifacts"
+    low_means: "Many ICs supported by only one document — may be idiosyncratic, not thematic"

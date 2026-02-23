@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.analyst_agent import AnalystAgent
 from src.category_agent import CategoryAgent
 from src.codebook_signoff import CodebookSignoff
 from src.config import EQDConfig, ModelClient, load_config
@@ -26,7 +27,7 @@ from src.models import Document, ThemeProposal
 from src.orchestrator import Layer1Orchestrator
 from src.preprocessing import preprocess_documents
 from src.quality_metrics import QualityMetricsEngine
-from src.quality_report import display_codebook_report, display_final_report, display_theme_report
+from src.quality_report import display_analytical_brief, display_codebook_report, display_final_report, display_theme_report
 from src.synthesizer_agent import SynthesizerAgent
 from src.theme_hil import (
     collect_all_feedback,
@@ -70,6 +71,7 @@ class EQDPipeline:
         self.synthesizer = SynthesizerAgent(self.model_client, self.db, self.config)
         self.quality_engine = QualityMetricsEngine(self.db, self.embedding_service)
         self.category_agent = CategoryAgent(self.model_client, self.db, self.config)
+        self.analyst = AnalystAgent(self.model_client, self.config)
 
     def run(
         self,
@@ -251,12 +253,24 @@ class EQDPipeline:
         # Export the analytical product: Theme → IC → Quote hierarchy
         results["thematic_structure"] = self.export_thematic_structure()
 
+        # ── Layer 4: Analyst Intelligence (non-fatal) ─────────────────
+        logger.info("[PIPELINE] Layer 4: Analytical interpretation")
+        try:
+            analytical_brief = self.analyst.analyze(results)
+            results["layer4"] = analytical_brief.model_dump()
+            logger.info("[PIPELINE] Layer 4 complete")
+        except Exception as e:
+            logger.error(f"[PIPELINE] Layer 4 failed (non-fatal): {e}")
+            results["layer4"] = None
+
         # Display reports
         if enable_hil:
             display_final_report(
                 quality_results,
                 decision_log_summary=self._get_decision_summary(),
             )
+            if results.get("layer4"):
+                display_analytical_brief(results["layer4"])
         else:
             logger.info("Final report display skipped (HIL disabled)")
 

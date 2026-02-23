@@ -22,6 +22,7 @@ class ProviderConfig(BaseModel):
     type: str  # "openai_compatible" or "anthropic"
     api_key_env: str
     base_url: Optional[str] = None
+    instructor_mode: Optional[str] = None  # "json" → instructor.Mode.JSON (needed for Google/Gemini)
 
 
 class NamedModel(BaseModel):
@@ -55,6 +56,56 @@ class ThemeRefinementConfig(BaseModel):
     split_min_overlaps: int = 3                # minimum overlap pairs to trigger split
 
 
+class MetricGuidelineConfig(BaseModel):
+    """Reference range for a single quality metric."""
+    description: str = ""
+    what_it_measures: str = ""
+    healthy_min: Optional[float] = None
+    healthy_max: Optional[float] = None
+    low_means: str = ""
+    high_means: str = ""
+
+
+class AnalystGuidelinesConfig(BaseModel):
+    """YAML-configurable reference ranges for Layer 4 metric interpretation."""
+    grounding_rate: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    drop_rate: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    extraction_density_mean: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    singleton_ratio: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    merge_rate_final: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    triage_auto_rate: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    its_final: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    theme_coherence_mean: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    theme_distinctness_overlap_ratio: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    sentiment_purity_mean: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    thematic_coverage: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+    cross_review_convergence: MetricGuidelineConfig = Field(default_factory=MetricGuidelineConfig)
+
+    def to_prompt_block(self) -> str:
+        """Format all guidelines as a text block for LLM prompts."""
+        lines = []
+        for field_name in self.model_fields:
+            guideline: MetricGuidelineConfig = getattr(self, field_name)
+            if not guideline.description:
+                continue
+            lines.append(f"{field_name}:")
+            lines.append(f"  Definition: {guideline.description}")
+            lines.append(f"  What it measures: {guideline.what_it_measures}")
+            range_parts = []
+            if guideline.healthy_min is not None:
+                range_parts.append(f"min {guideline.healthy_min}")
+            if guideline.healthy_max is not None:
+                range_parts.append(f"max {guideline.healthy_max}")
+            if range_parts:
+                lines.append(f"  Guideline range: {', '.join(range_parts)}")
+            if guideline.low_means:
+                lines.append(f"  When low: {guideline.low_means}")
+            if guideline.high_means:
+                lines.append(f"  When high: {guideline.high_means}")
+            lines.append("")
+        return "\n".join(lines)
+
+
 class ProcessingConfig(BaseModel):
     batch_size: int = 15
     segments_per_coder_call: int = 5  # micro-batch: segments per LLM call
@@ -77,6 +128,7 @@ class EQDConfig(BaseModel):
     study: StudyConfig
     processing: ProcessingConfig
     theme_refinement: ThemeRefinementConfig = Field(default_factory=ThemeRefinementConfig)
+    analyst_guidelines: AnalystGuidelinesConfig = Field(default_factory=AnalystGuidelinesConfig)
 
 
 def load_config(config_path: Optional[Path] = None) -> EQDConfig:
@@ -103,10 +155,19 @@ def load_config(config_path: Optional[Path] = None) -> EQDConfig:
     processing = ProcessingConfig(**raw.get("processing", {}))
     theme_refinement = ThemeRefinementConfig(**raw.get("theme_refinement", {}))
 
+    # Parse analyst guidelines — each metric is a nested dict
+    raw_guidelines = raw.get("analyst_guidelines", {})
+    guidelines_parsed = {}
+    for metric_name, metric_data in raw_guidelines.items():
+        if isinstance(metric_data, dict):
+            guidelines_parsed[metric_name] = MetricGuidelineConfig(**metric_data)
+    analyst_guidelines = AnalystGuidelinesConfig(**guidelines_parsed)
+
     return EQDConfig(
         providers=providers, models=models, agents=agents,
         study=study, processing=processing,
         theme_refinement=theme_refinement,
+        analyst_guidelines=analyst_guidelines,
     )
 
 
@@ -234,7 +295,13 @@ class ModelClient:
             if provider.base_url:
                 kwargs["base_url"] = provider.base_url
             raw = OpenAI(**kwargs)
-            client = instructor.from_openai(raw)
+            # Google's OpenAI-compat endpoint can't handle instructor's default tool-call
+            # mode when Pydantic models contain List fields (generates multiple tool calls).
+            # JSON mode forces a single JSON object response, which works correctly.
+            if provider.instructor_mode == "json":
+                client = instructor.from_openai(raw, mode=instructor.Mode.JSON)
+            else:
+                client = instructor.from_openai(raw)
 
         elif provider.type == "anthropic":
             from anthropic import Anthropic
