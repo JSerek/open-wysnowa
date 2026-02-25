@@ -937,7 +937,14 @@ For each category, evaluate:
 
 Identify the strongest themes (well-evidenced, coherent, clearly defined) and weakest themes (sparse evidence, low coherence, unclear boundaries).
 
-IMPORTANT: Be concise. The structural_summary at the end should highlight only the most critical structural issues and 2-3 top recommendations. Do not repeat individual theme assessments."""
+CHARACTER BUDGETS — strictly enforced by the schema validator:
+- theme assessment: max 800 chars (~120 words). Be direct.
+- theme suggested_action: max 400 chars (~60 words). One clear instruction.
+- category assessment: max 500 chars (~75 words). One tight paragraph.
+- structural_summary: max 1500 chars (~225 words). Critical issues + top 3 recommendations only.
+
+Do NOT write more than these limits allow. Truncate rather than fail validation.
+Do NOT repeat information from individual theme assessments in the structural_summary."""
 
 
 def build_structural_diagnostics_user_prompt(
@@ -1124,4 +1131,94 @@ def build_analyst_synthesis_user_prompt(
 
     lines.append("")
     lines.append("Synthesise the analysis and provide concrete recommendations.")
+    return "\n".join(lines)
+
+
+# ── Orphan Reassessment Prompts ───────────────────────────────────────────────
+
+def build_orphan_reassessment_system_prompt() -> str:
+    """
+    System prompt for the orphan IC reassessment pass.
+
+    Instructs the LLM to evaluate each orphaned IC against surviving themes
+    and decide: assign to existing theme, group into new thin theme, or flag
+    as isolated. Domain-neutral — works for any qualitative dataset.
+    """
+    return """You are an expert qualitative researcher performing a coverage audit on a thematic analysis.
+
+CONTEXT:
+Some Initial Codes (ICs) were not assigned to any theme during synthesis. These "orphans" may have been overlooked, may represent genuinely marginal observations, or may form thin clusters with other orphans.
+
+YOUR TASK:
+For each orphaned IC, decide ONE of three dispositions:
+
+1. ASSIGN_EXISTING — The IC genuinely fits within an existing surviving theme.
+   - The theme's definition clearly encompasses this IC's meaning.
+   - Do NOT stretch a theme's definition to force a fit.
+   - Provide the exact theme name in target_theme.
+
+2. NEW_THEME — The IC, together with other orphaned ICs, forms a coherent cluster worth naming as a theme.
+   - At least 2 orphaned ICs must share meaningful common ground.
+   - The cluster must represent a genuinely distinct phenomenon not captured by surviving themes.
+   - Provide the new theme(s) in the new_themes list with full ThemeProposal details.
+   - A single orphan cannot become its own theme — minimum 2 ICs.
+
+3. ISOLATED — The IC is a genuine one-off: too narrow, too ambiguous, or truly unique.
+   - It doesn't fit any surviving theme without distorting it.
+   - It can't be meaningfully grouped with other orphans.
+   - Accept isolation — not every code becomes a theme. This is analytically honest.
+
+RULES:
+- Every orphaned IC must receive exactly one disposition.
+- Prefer ASSIGN_EXISTING when a clear semantic fit exists.
+- Prefer ISOLATED over a forced NEW_THEME with weak coherence.
+- When proposing NEW_THEME: the constituent_ic_names list must contain only orphaned ICs.
+- Do not remove or modify surviving themes — they are fixed.
+
+OUTPUT: Return OrphanReassessmentOutput with:
+  - reasoning: brief rationale for your overall approach
+  - dispositions: one entry per orphaned IC
+  - new_themes: ThemeProposal objects for any new thin themes (may be empty list)"""
+
+
+def build_orphan_reassessment_user_prompt(
+    orphaned_ics: List[Dict],
+    themes_context: List[Dict],
+) -> str:
+    """
+    User prompt for the orphan reassessment pass.
+
+    Args:
+        orphaned_ics: list of {name, definition, quote_count, example_quotes}
+        themes_context: list of {name, definition, ic_names}
+    """
+    lines = [
+        f"ORPHANED ICs ({len(orphaned_ics)} codes without a theme assignment):",
+        "",
+    ]
+    for i, ic in enumerate(orphaned_ics, 1):
+        lines.append(f"  [{i}] {ic['name']}")
+        lines.append(f"      Definition: {ic['definition']}")
+        lines.append(f"      Evidence: {ic['quote_count']} quote(s)")
+        for q in ic.get("example_quotes", [])[:2]:
+            lines.append(f"      Quote: \"{q[:150]}\"")
+        lines.append("")
+
+    lines.append("")
+    lines.append(f"SURVIVING THEMES ({len(themes_context)} themes — read-only, do not modify):")
+    lines.append("")
+    for t in themes_context:
+        ic_list = ", ".join(t["ic_names"][:8])
+        if len(t["ic_names"]) > 8:
+            ic_list += f" ... (+{len(t['ic_names']) - 8} more)"
+        lines.append(f"  [{t['name']}]")
+        lines.append(f"      Definition: {t['definition']}")
+        lines.append(f"      ICs ({len(t['ic_names'])}): {ic_list}")
+        lines.append("")
+
+    lines.append("")
+    lines.append(
+        "For each orphaned IC, decide: ASSIGN_EXISTING (target_theme required), "
+        "NEW_THEME (group with other orphans), or ISOLATED (genuinely standalone)."
+    )
     return "\n".join(lines)

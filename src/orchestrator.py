@@ -750,18 +750,25 @@ class Layer1Orchestrator:
 
         Returns: quote needing deferred embedding, or None.
         """
-        # Find the existing IC by name
+        # Find the existing IC by name.
+        # The coder occasionally returns matches with a number prefix and/or
+        # brackets, e.g. "24. [parkour_system_buggy_and_lacks_momentum]" or
+        # "6. graphics_positive_assessment". Strip these before looking up.
+        import re as _re
+        raw_match = candidate.existing_code_match or ""
+        clean_match = _re.sub(r"^\d+\.\s*", "", raw_match).strip().strip("[]")
+
         codebook = self.ic_repo.get_all_active()
         target_ic = None
         for ic in codebook:
-            if ic.name == candidate.existing_code_match:
+            if ic.name == clean_match:
                 target_ic = ic
                 break
 
         if not target_ic:
             logger.warning(
                 f"Coder Agent matched '{candidate.ic_name}' to "
-                f"'{candidate.existing_code_match}' but IC not found in codebook. "
+                f"'{raw_match}' (cleaned: '{clean_match}') but IC not found in codebook. "
                 f"Skipping."
             )
             return None

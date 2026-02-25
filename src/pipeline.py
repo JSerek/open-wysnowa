@@ -215,6 +215,14 @@ class EQDPipeline:
                 dt["theme_name"] for dt in dissolved_themes
             ]
 
+        # ── Orphan Reassessment Pass ──────────────────────────────────
+        # Runs after the coherence gate + redistribution. Catches all ICs
+        # (including those never assigned in synthesis, not just dissolved ones).
+        if themes:
+            logger.info("[PIPELINE] Orphan reassessment pass")
+            orphan_result = self._run_orphan_reassessment()
+            results["layer2"]["orphan_reassessment"] = orphan_result
+
         # ── Category Synthesis ──────────────────────────────────────────
         if themes:
             logger.info("[PIPELINE] Category synthesis")
@@ -774,6 +782,197 @@ class EQDPipeline:
             cluster_b = ic_names[mid:]
 
         return cluster_a, cluster_b
+
+    # ── Orphan Reassessment ───────────────────────────────────────────────────
+
+    def _find_all_orphaned_ics(
+        self,
+        ic_repo,
+        vq_repo,
+    ) -> List[Dict]:
+        """
+        Return all active ICs that have no theme_ics junction row.
+
+        Includes ICs that were never assigned in synthesis AND those whose
+        theme was dissolved and could not be redistributed by embedding similarity.
+        """
+        active_ics = ic_repo.get_all_active()
+        orphaned: List[Dict] = []
+
+        for ic in active_ics:
+            with self.db.connect() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM theme_ics WHERE ic_id=?",
+                    (ic.id,),
+                ).fetchone()
+
+            if row["cnt"] == 0:
+                quotes = vq_repo.get_all_for_ic(ic.id)
+                orphaned.append({
+                    "id": ic.id,
+                    "name": ic.name,
+                    "definition": ic.definition,
+                    "quote_count": len(quotes),
+                    "example_quotes": [q.quote_text for q in quotes[:2]],
+                })
+
+        return orphaned
+
+    def _run_orphan_reassessment(self) -> Dict[str, Any]:
+        """
+        LLM-guided pass that reassesses unassigned ICs after the coherence gate.
+
+        Three outcomes per orphan:
+          - assign_existing: directly joins a surviving theme in the DB
+          - new_theme: grouped with other orphans; new thin Theme persisted
+          - isolated: logged, left unassigned (analytically honest)
+
+        Non-fatal: if the LLM call fails, orphans simply remain unassigned
+        and the pipeline continues.
+        """
+        from src.db import ThemeRepo
+
+        ic_repo = InitialCodeRepo(self.db)
+        vq_repo = VerbatimQuoteRepo(self.db)
+        theme_repo = ThemeRepo(self.db)
+
+        # 1. Identify all unassigned active ICs
+        orphaned_ics = self._find_all_orphaned_ics(ic_repo, vq_repo)
+        if not orphaned_ics:
+            logger.info("[ORPHAN] No orphaned ICs — skipping reassessment")
+            return {"orphaned_found": 0}
+
+        logger.info(f"[ORPHAN] {len(orphaned_ics)} orphaned IC(s) found:")
+        for ic in orphaned_ics:
+            logger.info(f"[ORPHAN]   '{ic['name']}' ({ic['quote_count']} quotes)")
+
+        # 2. Build surviving themes context
+        surviving_themes, latest_round = theme_repo.get_latest_round()
+        themes_context: List[Dict] = []
+        for theme in surviving_themes:
+            ic_ids = theme_repo.get_ics_for_theme(theme.id)
+            ic_names: List[str] = []
+            for ic_id in ic_ids:
+                ic = ic_repo.get_by_id(ic_id)
+                if ic:
+                    ic_names.append(ic.name)
+            themes_context.append({
+                "name": theme.name,
+                "definition": theme.definition,
+                "ic_names": ic_names,
+            })
+
+        if not themes_context:
+            logger.warning("[ORPHAN] No surviving themes — cannot reassign. Skipping.")
+            return {"orphaned_found": len(orphaned_ics), "error": "no_surviving_themes"}
+
+        # 3. Call LLM
+        result = self.synthesizer.reassess_orphans(orphaned_ics, themes_context)
+        if result is None:
+            logger.warning("[ORPHAN] Reassessment LLM call failed — orphans remain unassigned")
+            return {"orphaned_found": len(orphaned_ics), "error": "llm_failure"}
+
+        # 4. Build lookup tables for execution
+        theme_name_to_id = {t.name: t.id for t in surviving_themes}
+        orphan_name_to_data = {ic["name"]: ic for ic in orphaned_ics}
+
+        assigned = 0
+        isolated_count = 0
+
+        # 5. Execute assign_existing dispositions
+        for disposition in result.dispositions:
+            ic_name = disposition.ic_name
+            ic_data = orphan_name_to_data.get(ic_name)
+
+            if not ic_data:
+                logger.warning(f"[ORPHAN] Disposition references unknown IC '{ic_name}' — skipping")
+                continue
+
+            if disposition.action == "assign_existing":
+                target = disposition.target_theme
+                if not target:
+                    logger.warning(f"[ORPHAN] assign_existing for '{ic_name}' has no target_theme")
+                    isolated_count += 1
+                    continue
+
+                theme_id = theme_name_to_id.get(target)
+                if theme_id:
+                    theme_repo.assign_ic_to_theme(theme_id, ic_data["id"])
+                    assigned += 1
+                    logger.info(
+                        f"[ORPHAN] Assigned '{ic_name}' → '{target}' "
+                        f"({disposition.reasoning[:80]})"
+                    )
+                else:
+                    logger.warning(
+                        f"[ORPHAN] Target theme '{target}' not found for '{ic_name}' — isolating"
+                    )
+                    isolated_count += 1
+
+            elif disposition.action == "isolated":
+                isolated_count += 1
+                logger.info(
+                    f"[ORPHAN] Isolated '{ic_name}': {disposition.reasoning[:100]}"
+                )
+
+            # new_theme dispositions: handled via result.new_themes below
+
+        # 6. Persist new thin themes (for new_theme dispositions)
+        new_themes_created = 0
+        if result.new_themes:
+            # Validate: only orphaned IC names should appear in new themes
+            valid_orphan_names = {ic["name"] for ic in orphaned_ics}
+            clean_new_themes: List[ThemeProposal] = []
+
+            for proposal in result.new_themes:
+                valid_names = [
+                    n for n in proposal.constituent_ic_names
+                    if n in valid_orphan_names
+                ]
+                if len(valid_names) < 2:
+                    logger.warning(
+                        f"[ORPHAN] Proposed new theme '{proposal.name}' has fewer than 2 "
+                        f"valid orphan ICs ({valid_names}) — skipping"
+                    )
+                    # Isolate those ICs instead
+                    for n in valid_names:
+                        logger.info(f"[ORPHAN] Isolated '{n}' (thin theme rejected)")
+                        isolated_count += 1
+                    continue
+
+                # Use only valid orphan names in the persisted proposal
+                clean_new_themes.append(ThemeProposal(
+                    name=proposal.name,
+                    definition=proposal.definition,
+                    rationale=proposal.rationale or f"Thin theme from orphan reassessment",
+                    constituent_ic_names=valid_names,
+                ))
+
+            if clean_new_themes:
+                # Use round 3 (max allowed) to mark as late-stage addition
+                use_round = min(latest_round, 3) if latest_round else 3
+                persisted = self.synthesizer.persist_themes(clean_new_themes, round_number=use_round)
+                new_themes_created = len(persisted)
+
+                # Count ICs assigned via new themes
+                for theme in clean_new_themes:
+                    assigned += len(theme.constituent_ic_names)
+                    for ic_name in theme.constituent_ic_names:
+                        logger.info(f"[ORPHAN] '{ic_name}' → new theme '{theme.name}'")
+
+                logger.info(f"[ORPHAN] Created {new_themes_created} new thin theme(s)")
+
+        summary = {
+            "orphaned_found": len(orphaned_ics),
+            "assigned": assigned,
+            "isolated": isolated_count,
+            "new_themes_created": new_themes_created,
+        }
+        logger.info(
+            f"[ORPHAN] Complete — {assigned} assigned, "
+            f"{isolated_count} isolated, {new_themes_created} new theme(s) created"
+        )
+        return summary
 
     def _run_category_synthesis(self) -> Dict[str, Any]:
         """

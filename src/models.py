@@ -459,6 +459,74 @@ class SplitValidationOutput(BaseModel):
     )
 
 
+class OrphanDisposition(BaseModel):
+    """
+    LLM disposition for a single orphaned IC.
+
+    Three possible actions:
+      - assign_existing: IC fits a surviving theme — target_theme required
+      - new_theme: IC should be grouped with other orphans into a new thin theme
+      - isolated: IC is a genuine one-off, no meaningful thematic home
+    """
+    ic_name: str = Field(description="Name of the orphaned IC")
+    action: str = Field(
+        description="One of: assign_existing, new_theme, isolated",
+    )
+    target_theme: Optional[str] = Field(
+        default=None,
+        description="Name of existing surviving theme (required if action=assign_existing)",
+    )
+    reasoning: str = Field(
+        min_length=5,
+        max_length=300,
+        description="Brief justification for this disposition",
+    )
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, v: str) -> str:
+        allowed = {"assign_existing", "new_theme", "isolated"}
+        alias_map = {
+            "assign": "assign_existing",
+            "existing": "assign_existing",
+            "new": "new_theme",
+            "thin_theme": "new_theme",
+            "flag": "isolated",
+            "standalone": "isolated",
+            "unassigned": "isolated",
+        }
+        if v in alias_map:
+            return alias_map[v]
+        if v not in allowed:
+            raise ValueError(f"action must be one of {allowed}, got '{v}'")
+        return v
+
+
+class OrphanReassessmentOutput(BaseModel):
+    """
+    Full LLM response for the orphan IC reassessment pass.
+
+    Contains a disposition for every orphaned IC plus any new thin themes
+    to create from grouped orphans.
+    """
+    reasoning: str = Field(
+        min_length=10,
+        max_length=1000,
+        description="Overall reasoning across all dispositions",
+    )
+    dispositions: List["OrphanDisposition"] = Field(
+        min_length=1,
+        description="One disposition per orphaned IC — every orphan must be accounted for",
+    )
+    new_themes: List[ThemeProposal] = Field(
+        default_factory=list,
+        description=(
+            "New thin themes formed from grouped orphans. "
+            "Only include if action=new_theme was assigned to 2+ ICs with common ground."
+        ),
+    )
+
+
 class RefinedICOutput(BaseModel):
     """
     LLM response for IC definition refinement.
@@ -525,9 +593,9 @@ class ThemeDiagnostic(BaseModel):
     ic_count: int
     coherence: Optional[float] = None
     issue_type: Optional[str] = Field(default="healthy")
-    assessment: str = Field(min_length=20, max_length=500)
+    assessment: str = Field(min_length=20, max_length=800)
     suggested_action: Optional[str] = Field(
-        default=None, max_length=200,
+        default=None, max_length=400,
         description="Specific action if issue detected",
     )
 
@@ -536,8 +604,22 @@ class ThemeDiagnostic(BaseModel):
     def validate_issue_type(cls, v: Optional[str]) -> Optional[str]:
         allowed = {
             "magnet_theme", "weak_coherence", "low_evidence",
-            "naming_unclear", "sentiment_mixed", "healthy", None,
+            "naming_unclear", "sentiment_mixed", "healthy",
+            # aliases the LLM commonly uses — map to canonical values below
+            "low_coherence", "dissolved", "sentiment_mixing",
+            "boundary_overlap", "catch_all",
+            None,
         }
+        # normalise aliases to canonical
+        alias_map = {
+            "low_coherence": "weak_coherence",
+            "sentiment_mixing": "sentiment_mixed",
+            "dissolved": "healthy",       # dissolved themes have no remaining issues
+            "boundary_overlap": "weak_coherence",
+            "catch_all": "magnet_theme",
+        }
+        if v in alias_map:
+            return alias_map[v]
         if v not in allowed:
             raise ValueError(f"issue_type must be one of {allowed}, got '{v}'")
         return v
@@ -547,13 +629,20 @@ class CategoryDiagnostic(BaseModel):
     """Diagnostic for a category grouping."""
     category_name: str
     theme_count: int
-    assessment: str = Field(min_length=20, max_length=300)
+    assessment: str = Field(min_length=20, max_length=500)
     potential_issue: Optional[str] = Field(default="healthy")
 
     @field_validator("potential_issue")
     @classmethod
     def validate_potential_issue(cls, v: Optional[str]) -> Optional[str]:
         allowed = {"too_broad", "single_theme", "misaligned_themes", "healthy", None}
+        # normalise aliases
+        alias_map = {
+            "catch_all": "too_broad",
+            "boundary_overlap": "misaligned_themes",
+        }
+        if v in alias_map:
+            return alias_map[v]
         if v not in allowed:
             raise ValueError(f"potential_issue must be one of {allowed}, got '{v}'")
         return v
@@ -570,7 +659,7 @@ class StructuralDiagnostics(BaseModel):
         description="Themes needing attention",
     )
     structural_summary: str = Field(
-        min_length=50, max_length=1000,
+        min_length=50, max_length=1500,
         description="Overall assessment of the thematic structure",
     )
 

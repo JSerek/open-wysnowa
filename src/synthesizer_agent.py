@@ -19,6 +19,7 @@ from src.config import EQDConfig, ModelClient
 from src.db import Database, InitialCodeRepo, ThemeRepo, VerbatimQuoteRepo
 from src.models import (
     DistinctnessRevisionOutput,
+    OrphanReassessmentOutput,
     RevisionOutput,
     SplitValidationOutput,
     SynthesisOutput,
@@ -30,6 +31,8 @@ from src.models import (
 from src.prompts import (
     build_distinctness_revision_system_prompt,
     build_distinctness_revision_user_prompt,
+    build_orphan_reassessment_system_prompt,
+    build_orphan_reassessment_user_prompt,
     build_revision_system_prompt,
     build_revision_user_prompt,
     build_split_validation_system_prompt,
@@ -410,6 +413,85 @@ class SynthesizerAgent:
         return client.chat.completions.create(
             model=model_id,
             response_model=SplitValidationOutput,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    # ── Orphan Reassessment ───────────────────────────────────────────────
+
+    def reassess_orphans(
+        self,
+        orphaned_ics: List[Dict[str, Any]],
+        themes_context: List[Dict[str, Any]],
+    ) -> Optional[OrphanReassessmentOutput]:
+        """
+        LLM-guided reassessment of orphaned ICs (ICs with no theme assignment).
+
+        Each orphan receives one of three dispositions:
+          - assign_existing: place in a surviving theme
+          - new_theme: group with other orphans into a new thin theme
+          - isolated: flag as a genuine one-off (no forced assignment)
+
+        Args:
+            orphaned_ics: list of {id, name, definition, quote_count, example_quotes}
+            themes_context: list of {name, definition, ic_names} for surviving themes
+
+        Returns OrphanReassessmentOutput, or None on failure.
+        """
+        if not orphaned_ics:
+            logger.info("[ORPHAN] No orphaned ICs — skipping reassessment")
+            return None
+
+        system_prompt = build_orphan_reassessment_system_prompt()
+        user_prompt = build_orphan_reassessment_user_prompt(orphaned_ics, themes_context)
+
+        client, model_id, params = self.model_client.get_client("synthesizer_agent")
+
+        try:
+            result = self._call_orphan_reassessment_llm(
+                client=client,
+                model_id=model_id,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=params.temperature,
+                max_tokens=params.max_tokens,
+            )
+            n_assign = sum(1 for d in result.dispositions if d.action == "assign_existing")
+            n_new = sum(1 for d in result.dispositions if d.action == "new_theme")
+            n_iso = sum(1 for d in result.dispositions if d.action == "isolated")
+            logger.info(
+                f"[ORPHAN] Reassessment: {n_assign} assign_existing, "
+                f"{n_new} new_theme, {n_iso} isolated | "
+                f"{len(result.new_themes)} new theme(s) proposed"
+            )
+            return result
+
+        except Exception as e:
+            logger.error(f"[ERROR] Orphan reassessment failed: {e}")
+            return None
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    def _call_orphan_reassessment_llm(
+        self,
+        client: Any,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> OrphanReassessmentOutput:
+        """Instructor-patched LLM call for orphan reassessment."""
+        return client.chat.completions.create(
+            model=model_id,
+            response_model=OrphanReassessmentOutput,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

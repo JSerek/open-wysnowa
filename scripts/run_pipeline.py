@@ -113,6 +113,29 @@ Examples:
     else:
         db_path = "eqa_full.db"
 
+    # DB existence check — prevent accidental credit waste
+    db_file = Path(db_path)
+    if db_file.exists():
+        size_kb = db_file.stat().st_size / 1024
+        print(f"\n⚠  Database already exists: {db_path} ({size_kb:.1f} KB)")
+        print(f"   [O] Overwrite — delete existing DB and start fresh")
+        print(f"   [B] Build upon — append to existing DB (incremental run)")
+        print(f"   [A] Abort — cancel and exit")
+        while True:
+            choice = input("   Choice [O/B/A]: ").strip().upper()
+            if choice == "O":
+                db_file.unlink()
+                print(f"   Deleted {db_path}. Starting fresh.\n")
+                break
+            elif choice == "B":
+                print(f"   Building upon existing DB.\n")
+                break
+            elif choice == "A":
+                print("   Aborted.")
+                sys.exit(0)
+            else:
+                print("   Please enter O, B, or A.")
+
     # Load reviews
     print(f"\n{'='*60}")
     print(f"  EQD-AI Pipeline")
