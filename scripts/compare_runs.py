@@ -4,10 +4,10 @@ Stabilization run comparator.
 Reads multiple results JSON files and prints a side-by-side metrics table.
 Useful for tracking how metrics evolve across different configs/segment counts.
 
-Usage:
-    python compare_runs.py results_stab_30.json results_stab_50.json
-    python compare_runs.py results_*.json
-    python compare_runs.py results_*.json --csv > comparison.csv
+Usage (run from project root):
+    python scripts/compare_runs.py runs/results_stab_30.json runs/results_stab_50.json
+    python scripts/compare_runs.py runs/results_*.json
+    python scripts/compare_runs.py runs/results_*.json --csv > comparison.csv
 """
 
 from __future__ import annotations

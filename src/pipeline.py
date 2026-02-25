@@ -269,10 +269,11 @@ class EQDPipeline:
                 quality_results,
                 decision_log_summary=self._get_decision_summary(),
             )
-            if results.get("layer4"):
-                display_analytical_brief(results["layer4"])
-        else:
-            logger.info("Final report display skipped (HIL disabled)")
+
+        # Layer 4 brief is always shown — analysts need to see the
+        # interpretation regardless of whether HIL gating was active.
+        if results.get("layer4"):
+            display_analytical_brief(results["layer4"])
 
         logger.info("[PIPELINE] Complete")
         return results

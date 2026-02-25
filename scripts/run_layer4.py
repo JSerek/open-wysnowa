@@ -4,10 +4,10 @@ Standalone Layer 4 runner.
 Loads a saved results JSON and re-runs only the Analyst Intelligence layer
 without touching the database or re-running Layers 1-3.
 
-Usage:
-    python run_layer4.py                          # uses results_stab_30.json
-    python run_layer4.py results_stab_30.json
-    python run_layer4.py results_stab_30.json --save  # also writes *_layer4.json
+Usage (run from project root):
+    python scripts/run_layer4.py                              # uses runs/results_stab_30.json
+    python scripts/run_layer4.py runs/results_stab_30.json
+    python scripts/run_layer4.py runs/results_stab_30.json --save  # also writes *_layer4.json
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 # ── Path setup ────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent  # scripts/ → project root
 sys.path.insert(0, str(ROOT))
 
 from src.analyst_agent import AnalystAgent
@@ -32,8 +32,8 @@ def main() -> None:
     parser.add_argument(
         "results_file",
         nargs="?",
-        default="results_stab_30.json",
-        help="Path to the pipeline results JSON (default: results_stab_30.json)",
+        default="runs/results_stab_30.json",
+        help="Path to the pipeline results JSON (default: runs/results_stab_30.json)",
     )
     parser.add_argument(
         "--save",

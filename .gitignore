@@ -22,6 +22,12 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+.fuse_hidden*
+.Rhistory
+
+# SQLite WAL/SHM artifacts
+*.db-wal
+*.db-shm
 
 # Results / exports (generated, not source)
-*.json
+runs/
