@@ -421,6 +421,12 @@ class CategoryAgent:
 
         Falls back to the longer-definition heuristic on any error.
         """
+        if not hasattr(self, "model_client"):
+            # No LLM client available (e.g., unit-test environment) — use heuristic
+            if len(def_b) > len(def_a):
+                return name_b, def_b
+            return name_a, def_a
+
         agent_name = (
             "category_agent"
             if "category_agent" in self.config.agents
