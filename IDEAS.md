@@ -110,6 +110,7 @@ Track codebook state across pipeline runs for longitudinal analysis. When the pr
 - `version_id` foreign key on `initial_codes` (`introduced_in_version`)
 - `last_seen_version` on `initial_codes` (tracks when an IC was last supported by evidence)
 - Run mode stored in config as a session parameter, not a permanent setting
+- **Immutability fix (bundle here):** `InitialCodeRepo.update_definition()` currently mutates IC definitions in place, violating DESIGN_PRINCIPLES.md #1 and #5. The correct fix is append-only IC rows with a `version: int` column and queries that always pull `latest active version`. This requires the versioning schema above to be meaningful — implement as part of this sprint, not standalone.
 
 ### Three analysis modes (explicit upfront selection)
 The analyst selects mode at pipeline start. The system enforces availability based on DB state.
@@ -196,6 +197,16 @@ A reliability report: "Across 3 runs: 90% evidence overlap (quote level), alpha 
 
 **Architecture:** Computed during Layer 1 as a byproduct of span validation. Aggregated as a new metric in Layer 3. Could feed into a "segment difficulty" heuristic that triggers slower/more careful coding for hard segments.
 
+### Exhaustive `Field(description=...)` on Pydantic Models `[ready]`
+**Problem:** Several Pydantic models used as Instructor `response_model` targets have fields with no or minimal `Field(description="...")`. In MD_JSON mode, field descriptions are injected into the LLM's context — they're effectively part of the prompt. Sparse descriptions mean the LLM has less signal about what to produce, increasing validation failures and off-target outputs.
+
+**Fix:** Audit `ThemeIC`, `CategoryTheme`, `MetricAssessment`, `ConfigRecommendation`, `ComparatorOutput`, and `OrphanDisposition` for missing or thin descriptions. Add specific, instruction-style descriptions to every field that an LLM must populate. Focus on fields with semantic ambiguity (e.g., `is_isolated`, `round_finalised`, `merge_target_name`). No behaviour change — purely improves structured output reliability.
+
+### Coder Agent Batch Fallback — Targeted Retry `[ready]`
+**Problem:** When the coder's batch response fails Pydantic validation (malformed JSON, missing required fields), the current fallback re-runs every segment in the batch individually. If 1 of 8 segments caused the failure, we're doing 7 unnecessary solo LLM calls.
+
+**Fix:** Parse the `ValidationError` to identify which segment IDs failed. Retry only those in singular mode via tenacity exponential backoff. Segments that passed validation are kept. This is more efficient and uses tenacity as designed — targeted retry on the actual failure point, not a full batch reset. Requires reading the current fallback logic in `coder_agent.py` carefully before implementing.
+
 ### Category Merge Threshold Tuning `[ready]`
 **Problem:** The 30-review test run merged "Core Gameplay Mechanics" + "World Design & Content Structure" at sim=0.867 with threshold 0.85. These are analytically distinct categories. The threshold is too aggressive.
 
@@ -280,4 +291,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-02-28 — SUBCODE removed from codebase (models.py, prompts.py, orchestrator.py, hil.py, codebook_comparator.py, quality_metrics.py) — comparator now uses NEW/MERGE/REJECT only. Added to Next Up: Coder Agent Confidence Metric, Category Merge LLM Rename, thematic_structure Auto-Export, Re-run Detection After Codebook Rejection. Added to Other Ideas: Visual Segment Inspection UI, Overlapping Span Rate Diagnostic (baseline: near-zero), Alternative Qualitative Methodologies. IC sentiment not stored on initial_codes — quote-level sentiment + Theme Sentiment Purity covers the signal.*
+*Last updated: 2026-02-28 — Added to Next Up: Exhaustive Field descriptions [ready], Coder Agent Batch Fallback targeted retry [ready]. Immutability fix (append-only IC rows) bundled under Codebook Versioning — not standalone. SUBCODE removed from codebase (models.py, prompts.py, orchestrator.py, hil.py, codebook_comparator.py, quality_metrics.py) — comparator now uses NEW/MERGE/REJECT only. Added to Next Up: Coder Agent Confidence Metric, Category Merge LLM Rename, thematic_structure Auto-Export, Re-run Detection After Codebook Rejection. Added to Other Ideas: Visual Segment Inspection UI, Overlapping Span Rate Diagnostic (baseline: near-zero), Alternative Qualitative Methodologies. IC sentiment not stored on initial_codes — quote-level sentiment + Theme Sentiment Purity covers the signal.*

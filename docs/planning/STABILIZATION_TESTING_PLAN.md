@@ -5,27 +5,42 @@
 
 ---
 
+## Canonical Test Dataset
+
+**IMPORTANT:** All stabilization runs use the same canonical dataset — the top 100 most-upvoted negative reviews from `dying_light_beast_negative_full.csv`, sorted by `votes_up` descending. Subsets are nested: 30 ⊂ 50 ⊂ 100 (the first 30 are always the same 30).
+
+Dataset files (pre-generated in `data/`):
+- `data/canonical_top30.csv` — top 30 most-upvoted negative reviews
+- `data/canonical_top50.csv` — top 50 most-upvoted negative reviews
+- `data/canonical_top100.csv` — top 100 most-upvoted negative reviews
+
+Vote range: 943 (highest) to 9 (100th). This ensures runs are comparable — any metric changes are from pipeline behavior, not input variation.
+
+**Random-sample robustness tests come later**, after the pipeline is stable on the canonical set.
+
+---
+
 ## Phase 1: Automated Baseline (no HIL)
 
 Establish that the pipeline runs clean at different scales before testing interactive features.
 
 ### 1.1 Small run — 30 reviews (regression check)
 ```bash
-python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
-  --limit 30 --no-hil --db stab_30.db --save-results results_stab_30.json
+.venv/bin/python scripts/run_pipeline.py data/canonical_top30.csv \
+  --no-hil --db runs/canon_30.db --save-results runs/results_canon_30.json
 ```
 **Check:**
 - [ ] Pipeline completes without errors
 - [ ] S4 features fire: look for `[DISTINCT]` and `[SPLIT]` log lines
 - [ ] Layer 4 produces an analytical brief (results["layer4"] is not null)
+- [ ] Layer 4 brief prints to terminal (even in no-HIL mode)
 - [ ] All 17 metrics computed (check Layer 3 output)
 - [ ] Thematic structure has categories → themes → ICs → quotes hierarchy
-- [ ] Compare thematic structure to previous 30-review run (test_fix_v1.db) — are results broadly similar?
 
 ### 1.2 Medium run — 50 reviews
 ```bash
-python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
-  --limit 50 --no-hil --db stab_50.db --save-results results_stab_50.json
+.venv/bin/python scripts/run_pipeline.py data/canonical_top50.csv \
+  --no-hil --db runs/canon_50.db --save-results runs/results_canon_50.json
 ```
 **Check:**
 - [ ] Pipeline completes without errors
@@ -38,8 +53,8 @@ python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
 
 ### 1.3 Large run — 100 reviews
 ```bash
-python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
-  --limit 100 --no-hil --db stab_100.db --save-results results_stab_100.json
+.venv/bin/python scripts/run_pipeline.py data/canonical_top100.csv \
+  --no-hil --db runs/canon_100.db --save-results runs/results_canon_100.json
 ```
 **Check:**
 - [ ] Pipeline completes without errors or timeouts
@@ -52,12 +67,27 @@ python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
 - [ ] API costs: note total tokens/cost for budgeting
 
 ### 1.4 Cross-run comparison
+```bash
+.venv/bin/python scripts/compare_runs.py \
+  runs/results_canon_30.json runs/results_canon_50.json runs/results_canon_100.json
+```
 **Check:**
-- [ ] Compare results_stab_30.json vs results_stab_50.json vs results_stab_100.json
 - [ ] Do the same core themes emerge across all three runs?
 - [ ] Do metrics improve with more data (higher convergence, lower singleton ratio)?
 - [ ] Does Layer 4's assessment change meaningfully across scales?
 - [ ] Are there any metrics that degrade with more data (could indicate bugs)?
+- [ ] Distinctness: does overlap pair count grow proportionally or explosively?
+- [ ] Coverage: does it stay above 90% at all scales?
+- [ ] Convergence confidence: does it improve with more data?
+
+### 1.5 Model comparison (optional)
+Run the 100-review set with different coder models to isolate model effect on convergence:
+```bash
+# Edit eqd_config.yaml to switch coder_agent model, then:
+.venv/bin/python scripts/run_pipeline.py data/canonical_top100.csv \
+  --no-hil --db runs/canon_100_haiku.db --save-results runs/results_canon_100_haiku.json
+```
+Compare convergence confidence, merge rates, and IC creation rates across models.
 
 ---
 
@@ -67,8 +97,8 @@ Test every human-in-the-loop checkpoint. Use 30 reviews to keep it manageable.
 
 ### 2.1 Layer 1: IC Review Loop
 ```bash
-python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
-  --limit 30 --db stab_hil.db
+.venv/bin/python scripts/run_pipeline.py data/canonical_top30.csv \
+  --db runs/canon_hil.db
 ```
 
 **Test each decision type:**
@@ -126,8 +156,8 @@ python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
 
 ### 3.1 Empty/minimal data
 ```bash
-python scripts/run_pipeline.py dying_light_beast_negative_full.csv \
-  --limit 1 --no-hil --db stab_1.db
+.venv/bin/python scripts/run_pipeline.py data/canonical_top30.csv \
+  --limit 1 --no-hil --db runs/stab_1.db
 ```
 - [ ] Pipeline handles 1 review without crashing
 - [ ] Metrics that require 2+ data points return sensible defaults (not division by zero)
@@ -197,27 +227,33 @@ This is the qualitative part — you reading the output as a researcher.
 
 ---
 
-## Bug/Issue Log
+## Known Issues from Previous Runs
 
-| # | Phase | Description | Severity | Status |
-|---|-------|-------------|----------|--------|
-| 1 |       |             |          |        |
-| 2 |       |             |          |        |
+Issues identified from the random-sample STAB_30/50/100 runs (pre-canonical dataset):
 
-Fill this in as issues surface during testing. Each row becomes a fix or design discussion.
+| # | Area | Issue | Severity | Status |
+|---|------|-------|----------|--------|
+| 1 | Layer 2 | Refinement too passive — 0 dissolutions, near-zero merges despite 22-38 overlapping pairs | High | To fix |
+| 2 | Layer 1 | Low convergence confidence (39-45%) — codebook not stabilizing, excessive new IC creation | High | To fix |
+| 3 | Layer 2 | Coherence degrades with scale (0.61→0.50) — no coherence-guided splitting exists | Medium | To fix |
+| 4 | Coverage | 17% unassigned ICs at 100 segments — mix of threshold issues and missing themes | Medium | To investigate |
+| 5 | Layer 1 | IC reuse prompt too weak — coder creates duplicates that merge step cleans up | Medium | To fix |
+| 6 | Model | Gemini 2.5 Flash Lite may be too weak for coding — switch to Flash (non-lite) | Medium | To test |
 
 ---
 
 ## Done Criteria
 
 The stabilization phase is complete when:
-1. All Phase 1 automated runs pass without errors
+1. All Phase 1 automated runs pass without errors on canonical dataset
 2. All HIL checkpoints tested at least once (Phase 2)
 3. No critical bugs in the bug log
 4. Layer 4 brief quality is "good enough to act on" (Phase 4.4)
-5. You have a clear list of issues/improvements for the next development sprint
+5. Known issues from previous runs are addressed or have clear next steps
+6. You have a clear list of issues/improvements for the next development sprint
 
 ---
 
 *Created: 2026-02-23*
+*Updated: 2026-02-25 — canonical dataset, known issues table, model comparison phase*
 *Use after: Layer 4 implementation complete*
