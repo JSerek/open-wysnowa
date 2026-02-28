@@ -56,8 +56,8 @@ class TestBuildComparatorPrompts:
         prompt = build_comparator_system_prompt()
         assert "NEW" in prompt
         assert "MERGE" in prompt
-        assert "SUBCODE" in prompt
         assert "REJECT" in prompt
+        assert "SUBCODE" not in prompt  # SUBCODE removed in favour of MERGE
         assert "0.85" in prompt or "0.70" in prompt  # Threshold guidance
 
     def test_user_prompt_with_top_k(self):
