@@ -34,6 +34,13 @@ providers:
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     instructor_mode: json  # Required: Gemini fails with tool-call mode for List fields
 
+  openrouter:
+    type: openai_compatible
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    instructor_mode: json  # Safest cross-model mode: embeds JSON in system prompt
+                           # rather than relying on tool-call support (varies by model)
+
 # ── NAMED MODELS ──────────────────────────────────────────────────
 models:
   gpt4o_mini:
@@ -72,8 +79,22 @@ models:
     provider: openai
     model_id: text-embedding-3-small
 
+  # ── OpenRouter models ─────────────────────────────────────────────
+  # NOTE: verify exact model IDs at https://openrouter.ai/models
+  # The IDs below are placeholders — update with exact strings before use.
+  or_fast:
+    provider: openrouter
+    model_id: openai/gpt-4o-mini   # UPDATE: user requested gpt-5-nano — verify ID on OpenRouter
+
+  or_smart:
+    provider: openrouter
+    model_id: google/gemini-2.5-flash-preview  # UPDATE: user requested gemini-3-flash-preview — verify ID
+
 # ── AGENTS ────────────────────────────────────────────────────────
-# TEST CONFIG: All LLM agents on Haiku 4.5 (cheapest)
+# Active config: uncomment one block, comment the others.
+# Embeddings always stay on OpenAI (OpenRouter has no embedding API).
+
+# ── CURRENT: Google direct ──────────────────────────────────────
 agents:
   coder_agent:
     model: gemini_flash_lite      # non-thinking Gemini; uses JSON mode (see google provider)
@@ -102,6 +123,39 @@ agents:
 
   embedding:
     model: embed_openai
+
+# ── OPENROUTER config (swap to activate) ────────────────────────
+# To switch: comment the block above, uncomment this block.
+# Update or_fast / or_smart model_ids above after verifying on openrouter.ai/models
+#
+# agents:
+#   coder_agent:
+#     model: or_fast        # user target: openai/gpt-5-nano — verify ID
+#     temperature: 0.2
+#     max_tokens: 16000     # gpt-4o-mini caps at 16k; gpt-5-nano may differ
+#
+#   codebook_comparator:
+#     model: or_fast
+#     temperature: 0.1
+#     max_tokens: 8000
+#
+#   synthesizer_agent:
+#     model: or_smart       # user target: google/gemini-3-flash-preview — verify ID
+#     temperature: 0.2
+#     max_tokens: 32000     # Gemini Flash supports 65k output; 32k safe headroom for reasoning
+#
+#   category_agent:
+#     model: or_smart
+#     temperature: 0.2
+#     max_tokens: 32000
+#
+#   analyst_agent:
+#     model: or_smart
+#     temperature: 0.3
+#     max_tokens: 32000
+#
+#   embedding:
+#     model: embed_openai   # stays on OpenAI — OpenRouter has no embedding API
 
 # ── STUDY ─────────────────────────────────────────────────────────
 study:
