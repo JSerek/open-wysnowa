@@ -171,6 +171,26 @@ A reliability report: "Across 3 runs: 90% evidence overlap (quote level), alpha 
 
 ## Next Up
 
+### Coder Agent Confidence Metric `[ready]`
+**Problem:** `ICCandidate.confidence` (0–1, the coder's self-assessed certainty) is collected during Layer 1 but never stored on `InitialCode`, never aggregated, and never visible in Layer 3 metrics. All confidence signal evaporates after the triage decision.
+
+**Fix:** (1) Add a `mean_coder_confidence` metric to Layer 3 — mean confidence across all accepted new IC candidates. (2) Flag low-confidence new ICs (< 0.6) for HIL review even if they pass the auto-triage threshold. (3) Include per-IC confidence in the codebook sign-off display so analysts know which codes the model was uncertain about.
+
+### SUBCODE Deprecation `[ready]`
+**Problem:** `ComparatorRecommendation.SUBCODE` exists in the enum and may appear in comparator prompts, but has no handling branch in orchestrator.py. ICs are not hierarchical and never were. SUBCODE is dead code that creates confusing prompt signals.
+
+**Fix:** Remove `SUBCODE` from `ComparatorRecommendation` enum. Update the comparator system prompt to only output `NEW`, `MERGE`, or `REJECT`. Update the comparator agreement metric in `quality_metrics.py` (currently lumps SUBCODE with MERGE). Simple, low-risk.
+
+### Category Agent HIL Sign-Off `[ready]`
+**Problem:** Unlike theme synthesis (3 rounds, feedback, analyst sign-off), the Category Agent proposes and auto-validates categories with zero analyst input before DB persistence. If automatic merges or absorptions produce wrong categories (as seen in canon_30 where Core Gameplay Mechanics + World Design merged), there is no correction path without re-running.
+
+**Fix:** Add a single HIL checkpoint after `_validate_proposals()` and before `persist()`: display proposed categories with their constituent themes, prompt for approval or abort. If HIL is disabled, auto-confirm. One prompt, no feedback loop needed — categories are high-level enough that a simple yes/no gate is sufficient.
+
+### Resume-from-Codebook Path `[ready]`
+**Problem:** HIL Level 2 codebook rejection stops the pipeline. The codebook is already in the DB, but the only recovery path is re-running Layers 0–1 from scratch — expensive and wasteful.
+
+**Fix:** Add `--skip-extraction` flag to `run_pipeline.py` that jumps directly to the codebook sign-off check, using an existing DB. About 20 lines of code. This is a partial, lightweight precursor to Codebook Versioning's Discovery → Validation flow — useful now, not just when versioning lands.
+
 ### Segment Faithfulness Scoring `[design]`
 **Problem:** The pipeline drops candidates at span validation, but we don't know whether the coder agent is systematically hallucinating spans for certain types of text. A per-segment faithfulness score (verified_quotes / total_candidates) would reveal: (a) segments that consistently cause span errors, (b) whether certain text patterns (long sentences, slang, mixed language) cause more hallucination.
 
@@ -180,6 +200,21 @@ A reliability report: "Across 3 runs: 90% evidence overlap (quote level), alpha 
 **Problem:** The 30-review test run merged "Core Gameplay Mechanics" + "World Design & Content Structure" at sim=0.867 with threshold 0.85. These are analytically distinct categories. The threshold is too aggressive.
 
 **Fix:** Raise `category_merge_threshold` from 0.85 to 0.90 in `eqd_config.yaml`. Consider making category merging HIL-gated (analyst confirms merges) rather than fully automated.
+
+### Category Merge LLM Rename `[ready]`
+**Problem:** When the Category Agent merges two overlapping categories, it keeps "the longer definition" heuristically and picks the longer name. The result is often a poorly named merged category — it inherits one parent's name without reflecting the combined concept.
+
+**Fix:** After a merge, make a short LLM call (haiku, ~200 tokens) with: "Category A: {name_a} — Category B: {name_b} — Definition: {combined_def}. Propose a concise name (≤8 words) that covers both." Replace the heuristic with the LLM-proposed name. Applies only to merged categories, not absorbed singletons.
+
+### thematic_structure Auto-Export `[ready]`
+**Problem:** The full thematic structure (JSON: categories → themes → ICs → quotes) is built at the end of each run and held in memory, but never written to disk automatically. It is only available during the live terminal session. The analyst must manually request the export or the data is lost when the process exits.
+
+**Fix:** Auto-write `thematic_structure.json` to the run directory at the end of each pipeline run (next to the `.db` file). Optionally, write a human-readable `thematic_structure.md` with indented hierarchy. ~5 lines of code in `pipeline.py` or `run_pipeline.py`.
+
+### Re-run Detection After Codebook Rejection `[design]`
+**Problem:** When codebook sign-off is rejected (HIL Level 2), the ICs and quotes are already committed to the DB. If the analyst re-runs with "Build upon" instead of "Overwrite," the pipeline resumes with rejected data silently — it has no way to detect that the previous run ended in rejection.
+
+**Fix:** Record pipeline exit state to DB (a lightweight `pipeline_events` table or a single status flag). On startup with an existing DB, if the last run ended in codebook rejection, surface a clear warning before proceeding. Prerequisite: the Resume-from-Codebook `--skip-extraction` flag (above) should land first, since it provides the proper "resume from codebook" path rather than "re-run from scratch."
 
 ---
 
@@ -198,6 +233,43 @@ Some segments consistently produce more drops, lower-confidence ICs, or more gre
 ### Embedding Model Comparison `[later]`
 Run the same codebook through different embedding models and compare: how do similarity scores change? Do triage decisions flip? Which themes gain/lose coherence? This would help calibrate whether results are robust to embedding choice or artifacts of a specific model. Could extend to cover coder agent model comparison (related to inter-rater reliability cross-model idea).
 
+### Visual Segment Inspection UI `[later]`
+**Idea:** After Layer 1, display each segment with its extracted quotes highlighted inline (coloured spans), IC names annotated, and sentiment labels. Lets the analyst visually verify that the coder agent is extracting the right text from the right places — catches hallucinated spans, missed evidence, and sentiment errors faster than reading raw logs.
+
+**Implementation options:** (a) Static HTML report per run, generated from verbatim_quotes + segments tables. (b) Interactive terminal UI (rich/textual). (c) Notebook cell (pandas + ipywidgets). Option (a) is fastest to implement and most shareable. The data is already in the DB — span_start/span_end + quote_text + sentiment + ic_id per segment. No new pipeline logic needed, just a renderer.
+
+**Note on span overlaps:** In canon_30, only 1 of 30 segments has overlapping spans (3.3%, 236 chars total). At current scale the overlap rate is near-zero in normal operation. Adding a span_overlap_ratio metric is low-value until we see this become a problem with denser review types.
+
+### Alternative Qualitative Methodologies `[later]`
+**Applicable with current workflow (codebook + quote extraction architecture):**
+
+- **Framework Analysis:** Use a predefined analytical framework (e.g., Capability Approach, PERMA model) as the synthesis lens. Instead of open thematic synthesis, the Synthesizer maps ICs to predefined framework categories. The coder stage is unchanged; only the synthesizer prompt changes. Immediately possible via Layer 5 Interactive Lensing.
+- **Content Analysis (frequency-based):** Shift from grounded/interpretive to frequency-based analysis. Count IC occurrences per review rather than semantic grouping. Thematic coverage metric already approximates this. Would need a "count mode" report.
+- **Discourse Analysis (surface):** Focus the coder prompt on language patterns (metaphors, hedging, escalation language) rather than topics. The IC extraction architecture supports this — only the prompt framing changes.
+
+**Not applicable without major rearchitecting:**
+- Phenomenological analysis (requires bracketing and epoché — fundamentally incompatible with automated coding)
+- Narrative analysis (requires story arc / temporal structure per review — the pipeline treats reviews as bags of segments)
+- Ethnography / conversation analysis (requires multi-participant interaction data)
+
+### Overlapping Span Rate Diagnostic `[later]`
+**Idea:** After Layer 1, measure what fraction of character positions within each segment are covered by 2+ verbatim quote spans — i.e. the coder extracted overlapping evidence for different ICs from the same text.
+
+**Empirical baseline (canon_30):** 1 of 30 segments has any overlapping spans (3.3%, totalling 236 characters). Near-zero in normal operation. Signal may grow with denser, multi-topic reviews. Should surface as a diagnostic in the Layer 4 analyst brief rather than a hard Layer 3 metric — flag when overlap rate exceeds some threshold (e.g., >10% of segments). Not worth implementing until we see this become meaningful in real data.
+
+### Plugin / IDE Agent Integration `[later]`
+Package EQD-AI as an installable plugin for agent-enabled IDEs — specifically Claude Code (Anthropic) and Anygravity (Google's IDE with agents). The pipeline's tool surface maps naturally to the MCP (Model Context Protocol) primitive: expose `run_analysis`, `get_codebook`, `get_themes`, `get_metrics`, and `reassess_orphans` as callable tools, letting analysts drive the workflow conversationally rather than via terminal scripts.
+
+**Prerequisite:** Complete codebook versioning and Layer 5 first — the plugin becomes genuinely useful only when the full workflow is stable and the HIL gates are well-defined.
+
+**Key architectural changes needed:**
+- Replace blocking `input()` HIL gates with tool response round-trips (the conversation mediates feedback instead of the terminal)
+- Add explicit session/project management so tool calls know which DB to operate on
+- The `enable_hil=False` automated path is already almost plugin-ready — a single `run_analysis` MCP tool could wrap it today with minimal changes
+- The richer interactive path (feedback loops, coherence gate approvals) requires rearchitecting the gate logic into stateful, resumable steps
+
+**Honest scope estimate:** Automated mode as MCP plugin: ~1-2 days. Full interactive HIL via conversation: medium effort (week+). Packaging + marketplace listing: low, once MCP layer exists.
+
 ### Export Formats `[later]`
 - ATLAS.ti / NVivo compatible export (for researchers who want to continue in traditional QDA tools)
 - Interactive HTML report with collapsible theme hierarchy
@@ -208,4 +280,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-02-23 — Session: S4 resolved, S1-S3 marked resolved, codebook versioning redesign (mode selection + ClassifierAgent), inter-rater reliability design, knowledge graph assessment*
+*Last updated: 2026-02-28 — SUBCODE removed from codebase (models.py, prompts.py, orchestrator.py, hil.py, codebook_comparator.py, quality_metrics.py) — comparator now uses NEW/MERGE/REJECT only. Added to Next Up: Coder Agent Confidence Metric, Category Merge LLM Rename, thematic_structure Auto-Export, Re-run Detection After Codebook Rejection. Added to Other Ideas: Visual Segment Inspection UI, Overlapping Span Rate Diagnostic (baseline: near-zero), Alternative Qualitative Methodologies. IC sentiment not stored on initial_codes — quote-level sentiment + Theme Sentiment Purity covers the signal.*

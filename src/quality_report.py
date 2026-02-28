@@ -209,9 +209,11 @@ def display_analytical_brief(brief: Dict[str, Any]) -> None:
     if assessments:
         print(f"\n  {SECTION_SEP}")
         print(f"  METRICS ASSESSMENT")
+        status_emoji = {"healthy": "🟢", "monitor": "🟡", "investigate": "🔴"}
         for a in assessments:
-            status = a.get("status", "?").upper()
-            print(f"\n    {a.get('metric_name', '?')}: {a.get('observed_value', '?')} [{status}]")
+            status = a.get("status", "?")
+            emoji = status_emoji.get(status, "⚪")
+            print(f"\n    {emoji} {a.get('metric_name', '?')}: {a.get('observed_value', '?')}")
             print(f"      {a.get('interpretation', '')}")
             ctx = a.get("context_factors")
             if ctx:

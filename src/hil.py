@@ -139,7 +139,6 @@ def prompt_decision(
     if merge_targets:
         targets_str = ",".join(str(t) for t in merge_targets)
         print(f"    [M{targets_str}] MERGE with similar code (e.g., M1)")
-        print(f"    [S{targets_str}] Accept as SUBCODE of similar code (e.g., S1)")
     print(f"    [R] REJECT candidate")
     print(f"    [E] EDIT candidate then decide")
     print(f"    [Q] QUIT batch review")
@@ -171,28 +170,13 @@ def prompt_decision(
                 pass
             print(f"  Invalid merge target. Valid: {merge_targets}")
 
-        elif raw.startswith("S") and len(raw) > 1:
-            try:
-                idx = int(raw[1:])
-                if idx in merge_targets:
-                    notes = _prompt_notes()
-                    return "S", idx, notes
-            except ValueError:
-                pass
-            print(f"  Invalid subcode target. Valid: {merge_targets}")
-
         elif raw == "M" and merge_targets:
             # Default to M1
             notes = _prompt_notes()
             return "M", 1, notes
 
-        elif raw == "S" and merge_targets:
-            # Default to S1
-            notes = _prompt_notes()
-            return "S", 1, notes
-
         else:
-            valid = "N, M, S, R, E, Q" if merge_targets else "N, R, E, Q"
+            valid = "N, M, R, E, Q" if merge_targets else "N, R, E, Q"
             print(f"  Invalid input. Valid choices: {valid}")
 
 

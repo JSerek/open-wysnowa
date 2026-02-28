@@ -199,8 +199,7 @@ YOUR TASK: Compare the new candidate against the most similar existing codes and
 
 RECOMMENDATIONS:
 - NEW: The candidate captures a distinct meaning not covered by any existing code. Add it to the codebook.
-- MERGE: The candidate is semantically equivalent to an existing code — same meaning, just different wording. Specify which code to merge into via merge_target_name.
-- SUBCODE: The candidate is a meaningful specialization of an existing code. It adds nuance worth preserving. Specify the parent via merge_target_name.
+- MERGE: The candidate is semantically equivalent to an existing code — same meaning, just different wording, or a meaningful specialisation that doesn't warrant a separate code. Specify which code to merge into via merge_target_name.
 - REJECT: The candidate is too vague, not grounded in data, or genuinely redundant with no added value.
 
 DECISION CRITERIA:

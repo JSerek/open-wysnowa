@@ -412,8 +412,8 @@ class Layer1Orchestrator:
                         break
                 else:
                     # Auto-accept LLM recommendation
-                    action = comp_output.recommendation.value[0]  # N, M, S, R → first char
-                    target_idx = 1 if action in ("M", "S") and top_k else None
+                    action = comp_output.recommendation.value[0]  # N, M, R → first char
+                    target_idx = 1 if action == "M" and top_k else None
                     notes = "auto-accepted (HIL disabled)"
 
                 # 5d. Apply decision (IC embed + persist happens immediately
@@ -580,7 +580,7 @@ class Layer1Orchestrator:
             )
             return "new", quote, ic.id
 
-        elif action in ("M", "S") and target_idx and top_k:
+        elif action == "M" and target_idx and top_k:
             target = top_k[target_idx - 1]  # 1-indexed
             quote = self._apply_merge(
                 candidate, segment_id, target.ic_id, comp_output, notes,

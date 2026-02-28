@@ -289,7 +289,6 @@ class ComparatorRecommendation(str, Enum):
     """Codebook Comparator's recommendation for a new IC candidate."""
     NEW = "NEW"
     MERGE = "MERGE"
-    SUBCODE = "SUBCODE"
     REJECT = "REJECT"
 
 
@@ -302,7 +301,7 @@ class ComparatorOutput(BaseModel):
     recommendation: ComparatorRecommendation
     merge_target_name: Optional[str] = Field(
         default=None,
-        description="Name of existing IC to merge into (if MERGE/SUBCODE)",
+        description="Name of existing IC to merge into (if MERGE)",
     )
     reasoning: str = Field(
         min_length=5,

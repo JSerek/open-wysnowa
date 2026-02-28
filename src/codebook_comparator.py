@@ -37,7 +37,7 @@ class CodebookComparator:
     Four-step process (per architecture doc Section 5.3):
     1. EMBED: Compute embedding for new IC candidate
     2. SIMILARITY: Find top-K similar active ICs
-    3. LLM REASONING: Compare and recommend (NEW/MERGE/SUBCODE/REJECT)
+    3. LLM REASONING: Compare and recommend (NEW/MERGE/REJECT)
     4. Return recommendation for HIL review
 
     Steps 1-3 happen here. Step 4 (HIL) is in hil.py.

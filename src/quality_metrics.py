@@ -917,7 +917,7 @@ class QualityMetricsEngine:
         - sim_direction: based on max_sim vs midpoint → "NEW" or "MERGE"
         - llm_recommendation: what the LLM actually decided
 
-        Agreement = both say NEW or both say MERGE/SUBCODE.
+        Agreement = both say NEW or both say MERGE.
 
         Interpretation:
         - >0.8 = embeddings and LLM aligned, triage could be more aggressive
@@ -938,7 +938,7 @@ class QualityMetricsEngine:
             # Map LLM recommendations to direction
             if llm_rec in ("NEW", "REJECT"):
                 llm_dir = "NEW"
-            else:  # MERGE, SUBCODE
+            else:  # MERGE
                 llm_dir = "MERGE"
 
             if sim_dir == llm_dir:
