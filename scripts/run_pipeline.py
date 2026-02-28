@@ -162,6 +162,16 @@ Examples:
     enable_hil = not args.no_hil
     results = pipeline.run(docs, enable_hil=enable_hil)
 
+    # Auto-export thematic structure to JSON next to the DB file
+    structure = results.get("thematic_structure")
+    if structure:
+        db_stem = Path(db_path).stem
+        db_dir = Path(db_path).parent
+        structure_path = db_dir / f"{db_stem}_thematic_structure.json"
+        with open(structure_path, "w", encoding="utf-8") as f:
+            json.dump(structure, f, indent=2, default=str)
+        print(f"  Thematic structure: {structure_path}")
+
     # Print summary
     print(f"\n{'='*60}")
     print(f"  PIPELINE COMPLETE")
@@ -171,6 +181,11 @@ Examples:
     print(f"  ICs created:  {results['layer1'].get('new_ics_created', 0)}")
     print(f"  ICs merged:   {results['layer1'].get('merged', 0)}")
     print(f"  ICs rejected: {results['layer1'].get('rejected', 0)}")
+    mean_conf = results['layer1'].get('mean_coder_confidence')
+    low_conf = results['layer1'].get('low_confidence_ic_count', 0)
+    if mean_conf is not None:
+        low_str = f"  ({low_conf} low-confidence)" if low_conf else ""
+        print(f"  Confidence:   {mean_conf:.2f} mean{low_str}")
     meta_f = results['layer1'].get('meta_filtered', 0)
     meta_fl = results['layer1'].get('meta_flagged', 0)
     if meta_f or meta_fl:

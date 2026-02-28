@@ -58,6 +58,24 @@ def display_codebook_report(metrics: Dict[str, Any]) -> None:
         rate = coverage.get("coverage_rate", 0.0)
         print(f"    Coded segments: {coded_seg}/{total_seg} ({rate:.1%})")
 
+    # Coder Confidence
+    conf = metrics.get("coder_confidence", {})
+    if conf and conf.get("mean_confidence") is not None:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  CODER CONFIDENCE")
+        mean_c = conf["mean_confidence"]
+        low_n = conf.get("low_confidence_count", 0)
+        total_n = conf.get("total_new_ics", 0)
+        low_ratio = conf.get("low_confidence_ratio", 0.0)
+        label = "high" if mean_c >= 0.8 else "moderate" if mean_c >= 0.6 else "LOW ⚠"
+        print(f"    Mean confidence: {mean_c:.2f} ({label})")
+        print(f"    Range:           {conf.get('min_confidence', 0):.2f} – {conf.get('max_confidence', 0):.2f}")
+        if low_n:
+            flag = " ⚠ review these ICs" if low_ratio > 0.20 else ""
+            print(f"    Low-confidence (<0.6): {low_n}/{total_n} ({low_ratio:.0%}){flag}")
+        else:
+            print(f"    Low-confidence (<0.6): none")
+
     # ITS curve
     its_history: List[BatchITS] = metrics.get("its_history", [])
     if its_history:

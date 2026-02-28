@@ -226,7 +226,7 @@ class EQDPipeline:
         # ── Category Synthesis ──────────────────────────────────────────
         if themes:
             logger.info("[PIPELINE] Category synthesis")
-            categories_result = self._run_category_synthesis()
+            categories_result = self._run_category_synthesis(enable_hil)
             results["categories"] = categories_result
             logger.info(
                 f"[PIPELINE] Category synthesis complete: "
@@ -247,6 +247,7 @@ class EQDPipeline:
             total_candidates=layer1_summary.get("total_candidates", 0),
             dropped_per_segment=layer1_summary.get("dropped_per_segment", {}),
             ic_stability_scores=layer1_summary.get("ic_stability_scores", []),
+            new_ic_confidences=layer1_summary.get("new_ic_confidences", []),
         )
 
         # Add cumulative saturation curve from Layer 1
@@ -974,11 +975,14 @@ class EQDPipeline:
         )
         return summary
 
-    def _run_category_synthesis(self) -> Dict[str, Any]:
+    def _run_category_synthesis(self, enable_hil: bool = True) -> Dict[str, Any]:
         """
         Run the CategoryAgent on final themes.
 
         Fetches IC details (definitions + example quotes) for richer prompt context.
+        Includes a HIL sign-off gate before persisting: analyst approves or skips.
+        If HIL is disabled, categories are auto-approved.
+
         Returns summary dict with categories_created count.
         """
         from src.db import ThemeRepo
@@ -1025,6 +1029,19 @@ class EQDPipeline:
         proposals = self.category_agent.synthesize(themes_data)
         if not proposals:
             return {"categories_created": 0}
+
+        # ── HIL Sign-Off ──────────────────────────────────────────────────
+        # Analyst reviews proposed categories before any DB writes.
+        # In automated mode (enable_hil=False), auto-approve.
+        if enable_hil:
+            from src.hil import prompt_category_signoff
+            approved = prompt_category_signoff(proposals, themes_data)
+            if not approved:
+                logger.warning("[CAT:HIL] Category sign-off skipped by analyst")
+                return {"categories_created": 0, "category_signoff": "skipped"}
+            logger.info("[CAT:HIL] Category sign-off approved")
+        else:
+            logger.info("[CAT:HIL] Category sign-off auto-approved (HIL disabled)")
 
         # Persist
         persisted = self.category_agent.persist(proposals, final_themes)

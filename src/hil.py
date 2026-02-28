@@ -7,7 +7,7 @@ Displays IC candidates with context, LLM reasoning, and collects
 structured decisions from the human analyst.
 
 Structured choices are the primary input:
-  [N] New  [M] Merge  [S] Subcode  [R] Reject  [E] Edit  [Q] Quit
+  [N] New  [M] Merge  [R] Reject  [E] Edit  [Q] Quit
 
 All decisions are logged with timestamp, LLM recommendation, and human notes.
 """
@@ -262,3 +262,56 @@ def prompt_theme_dissolve() -> bool:
         if raw in ("N", "NO"):
             return False
         print("    Please enter Y or N.")
+
+
+# ── Category Agent Sign-Off ───────────────────────────────────────────────────
+
+def prompt_category_signoff(
+    proposals: List[Any],
+    themes_data: List[Dict[str, Any]],
+) -> bool:
+    """
+    Display proposed categories and ask the analyst to approve or skip.
+
+    Called after CategoryAgent._validate_proposals() and before persist().
+    If HIL is disabled, callers auto-approve without calling this function.
+
+    Returns True to persist categories, False to skip (no categories stored
+    this run — analyst must re-run category synthesis manually).
+
+    Args:
+        proposals: list of CategoryProposal objects (name, definition,
+                   constituent_theme_names).
+        themes_data: list of theme dicts used to show per-theme IC counts.
+    """
+    # Build a quick lookup: theme name → ic_count
+    theme_ic_counts = {t["name"]: t.get("ic_count", 0) for t in themes_data}
+
+    print(f"\n{SEPARATOR}")
+    print("  CATEGORY SIGN-OFF")
+    print(f"  {len(proposals)} categor{'y' if len(proposals) == 1 else 'ies'} proposed")
+    print(f"{SEPARATOR}")
+
+    for i, proposal in enumerate(proposals, 1):
+        print(f"\n  [{i}] {proposal.name}")
+        print(f"      {proposal.definition[:120]}")
+        theme_names = proposal.constituent_theme_names
+        total_ics = sum(theme_ic_counts.get(t, 0) for t in theme_names)
+        print(f"      Themes ({len(theme_names)}, {total_ics} ICs total):")
+        for t in theme_names:
+            ic_n = theme_ic_counts.get(t, 0)
+            print(f"        · {t} ({ic_n} IC{'s' if ic_n != 1 else ''})")
+
+    print(f"\n{SEPARATOR}")
+    print("  [A] Approve — persist these categories to the database")
+    print("  [S] Skip    — do not persist; re-run later")
+    print(f"{SEPARATOR}")
+
+    while True:
+        raw = input("\n  > ").strip().upper()
+        if raw in ("A", "APPROVE", "Y", "YES"):
+            return True
+        if raw in ("S", "SKIP", "N", "NO"):
+            print("  Categories skipped. Re-run pipeline to re-synthesise.")
+            return False
+        print("  Please enter A (approve) or S (skip).")

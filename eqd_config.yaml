@@ -54,7 +54,7 @@ models:
 
   gemini_flash:
     provider: google
-    model_id: gemini-2.0-flash
+    model_id: gemini-2.5-flash
 
   gemini_flash_3_preview:
     provider: google
@@ -76,12 +76,12 @@ models:
 # TEST CONFIG: All LLM agents on Haiku 4.5 (cheapest)
 agents:
   coder_agent:
-    model: gemini_flash_lite        # non-thinking Gemini; uses JSON mode (see google provider)
+    model: gemini_flash_lite      # non-thinking Gemini; uses JSON mode (see google provider)
     temperature: 0.2
     max_tokens: 4000
 
   codebook_comparator:
-    model: claude_haiku
+    model: gemini_flash_lite
     temperature: 0.1
     max_tokens: 2000
 
@@ -118,7 +118,7 @@ processing:
   merge_conflict_similarity_threshold: 0.75
   auto_new_threshold: 0.5
   auto_merge_threshold: 0.72
-  category_merge_threshold: 0.85
+  category_merge_threshold: 0.90
   coherence_threshold: 1.0
   coherence_threshold_small: 0.90
   meta_ic_filter:

@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS initial_codes (
     definition      TEXT NOT NULL,
     embedding_json  TEXT,
     status          TEXT NOT NULL DEFAULT 'active',
+    confidence      REAL,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -297,22 +298,26 @@ class InitialCodeRepo:
         with self.db.connect() as conn:
             conn.execute(
                 """INSERT INTO initial_codes
-                   (id, name, definition, embedding_json, status, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?)""",
+                   (id, name, definition, embedding_json, status, confidence,
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
                 (ic.id, ic.name, ic.definition,
                  json.dumps(ic.embedding_json) if ic.embedding_json else None,
-                 ic.status.value, ic.created_at.isoformat(), ic.updated_at.isoformat()),
+                 ic.status.value, ic.confidence,
+                 ic.created_at.isoformat(), ic.updated_at.isoformat()),
             )
 
     def update(self, ic: InitialCode) -> None:
         with self.db.connect() as conn:
             conn.execute(
                 """UPDATE initial_codes
-                   SET name=?, definition=?, embedding_json=?, status=?, updated_at=?
+                   SET name=?, definition=?, embedding_json=?, status=?,
+                       confidence=?, updated_at=?
                    WHERE id=?""",
                 (ic.name, ic.definition,
                  json.dumps(ic.embedding_json) if ic.embedding_json else None,
-                 ic.status.value, datetime.utcnow().isoformat(), ic.id),
+                 ic.status.value, ic.confidence,
+                 datetime.utcnow().isoformat(), ic.id),
             )
 
     def get_by_id(self, ic_id: str) -> Optional[InitialCode]:
@@ -351,9 +356,15 @@ class InitialCodeRepo:
     @staticmethod
     def _row_to_ic(row: sqlite3.Row) -> InitialCode:
         emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
+        # confidence column may be absent in DBs created before this field was added
+        try:
+            conf = row["confidence"]
+        except IndexError:
+            conf = None
         return InitialCode(
             id=row["id"], name=row["name"], definition=row["definition"],
             embedding_json=emb, status=ICStatus(row["status"]),
+            confidence=conf,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

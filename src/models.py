@@ -138,6 +138,17 @@ class InitialCode(BaseModel):
     definition: str = Field(min_length=5, max_length=600)
     embedding_json: Optional[List[float]] = None
     status: ICStatus = Field(default=ICStatus.ACTIVE)
+    confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Coder agent's self-assessed confidence (0–1) at the time this IC "
+            "was first created. Reflects how certain the model was that the "
+            "extracted concept was grounded in the verbatim text. None for ICs "
+            "created before this field was introduced."
+        ),
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

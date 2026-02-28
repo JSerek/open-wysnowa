@@ -275,8 +275,52 @@ class QualityMetricsEngine:
         sentiment_purity = self.compute_sentiment_purity()
         results["sentiment_purity"] = sentiment_purity
 
-        logger.info("All quality metrics computed (17 metrics)")
+        # 18. Coder Confidence
+        new_ic_confidences = kwargs.get("new_ic_confidences", [])
+        coder_confidence = self.compute_coder_confidence(new_ic_confidences)
+        results["coder_confidence"] = coder_confidence
+
+        logger.info("All quality metrics computed (18 metrics)")
         return results
+
+    def compute_coder_confidence(
+        self, confidences: List[float]
+    ) -> Dict[str, Any]:
+        """
+        Summarise coder agent self-assessed confidence across new ICs.
+
+        Confidence (0–1) is recorded at IC creation time from ICCandidate.confidence.
+        Only accepted NEW ICs are included — merged and rejected candidates are excluded.
+
+        Interpretation:
+        - mean > 0.8  = coder is highly certain; codebook is well-established or data is clear
+        - mean 0.6-0.8 = healthy uncertainty; normal for exploratory runs
+        - mean < 0.6  = coder is frequently uncertain; review low-confidence ICs in codebook
+        - low_confidence_count > 20% of ICs = consider HIL review of flagged codes
+        """
+        if not confidences:
+            return {
+                "mean_confidence": None,
+                "min_confidence": None,
+                "max_confidence": None,
+                "low_confidence_count": 0,
+                "low_confidence_ratio": 0.0,
+                "total_new_ics": 0,
+            }
+
+        n = len(confidences)
+        low = [c for c in confidences if c < 0.6]
+        result = {
+            "mean_confidence": round(sum(confidences) / n, 4),
+            "min_confidence": round(min(confidences), 4),
+            "max_confidence": round(max(confidences), 4),
+            "low_confidence_count": len(low),
+            "low_confidence_ratio": round(len(low) / n, 4),
+            "total_new_ics": n,
+        }
+
+        self._persist_metric("coder_confidence", result)
+        return result
 
     def compute_grounding(self) -> Dict[str, Any]:
         """

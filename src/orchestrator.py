@@ -276,6 +276,8 @@ class Layer1Orchestrator:
             # Meta-IC filtering
             "meta_filtered": 0,
             "meta_flagged": 0,
+            # Coder confidence — collected for new ICs only (not merges or rejects)
+            "new_ic_confidences": [],
         }
 
         batch_num = 0
@@ -436,6 +438,9 @@ class Layer1Orchestrator:
                 if result == "new":
                     summary["new_ics_created"] += 1
                     batch_new_count += 1
+                    # Track coder confidence for this accepted IC
+                    if hasattr(cand, "confidence") and cand.confidence is not None:
+                        summary["new_ic_confidences"].append(cand.confidence)
                     # Track cumulative saturation: which segment introduced this IC
                     seg_idx = segment_indices.get(seg_id)
                     if seg_idx is not None:
@@ -512,6 +517,15 @@ class Layer1Orchestrator:
 
         # IC stability scores from refinement
         summary["ic_stability_scores"] = getattr(self, "_ic_stability_scores", [])
+
+        # Summarise coder confidence (already collected per-new-IC above)
+        confidences = summary.get("new_ic_confidences", [])
+        if confidences:
+            summary["mean_coder_confidence"] = sum(confidences) / len(confidences)
+            summary["low_confidence_ic_count"] = sum(1 for c in confidences if c < 0.6)
+        else:
+            summary["mean_coder_confidence"] = None
+            summary["low_confidence_ic_count"] = 0
 
         return summary
 
@@ -613,11 +627,12 @@ class Layer1Orchestrator:
 
         Returns: (ic, quote_needing_embed_or_none)
         """
-        # Create IC
+        # Create IC — store coder's confidence at creation time
         ic = InitialCode(
             name=candidate.ic_name,
             definition=candidate.definition,
             status=ICStatus.ACTIVE,
+            confidence=candidate.confidence,
         )
 
         # Embed IC (embed-on-write) — always immediate
