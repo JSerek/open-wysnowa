@@ -1,0 +1,37 @@
+{
+  "lastUpdated": "2026-02-28T00:00:00.000Z",
+  "skills": [
+    {
+      "skillId": "eqa-decision-protocol",
+      "name": "eqa-decision-protocol",
+      "description": "Guides design decision-making during EQD-AI pipeline development using structured AskUserQuestion options instead of prose. Use when a design choice, implementation approach, or architectural question requires a decision — especially when multiple valid options exist. Triggers: \"should we\", \"what approach\", \"how should we handle\", \"which option\", \"decide\", \"I was thinking\", \"what do you think about implementing\", \"option A or B\", \"design choice\", \"tradeoff\".",
+      "creatorType": "user",
+      "updatedAt": "2026-02-28T00:00:00.000Z",
+      "enabled": true
+    },
+    {
+      "skillId": "eqa-ideas-maintenance",
+      "name": "eqa-ideas-maintenance",
+      "description": "Maintains IDEAS.md for the EQD-AI project — adding new entries, updating status tags, and keeping the Last updated footer accurate. Use when a sprint task is completed, a decision is made, a new idea surfaces, or an item's status changes. Triggers: \"add to IDEAS.md\", \"update IDEAS.md\", \"mark as done\", \"move to ready\", \"log this idea\", \"add to next iteration\", \"this is ready to implement\", \"park this for later\", \"note this\".",
+      "creatorType": "user",
+      "updatedAt": "2026-02-28T00:00:00.000Z",
+      "enabled": true
+    },
+    {
+      "skillId": "eqa-arch-review",
+      "name": "eqa-arch-review",
+      "description": "Reviews external architecture plans or implementation suggestions against EQD-AI's DESIGN_PRINCIPLES.md. Use when an outside agent (Gemini, another LLM, team member) proposes changes to the pipeline design, data model, or implementation approach. Triggers: \"review this plan\", \"what do you think of this design\", \"Gemini suggested\", \"another agent proposed\", \"architecture proposal\", \"external plan\", \"evaluate this\", \"assess this implementation\", \"what do you make of this\".",
+      "creatorType": "user",
+      "updatedAt": "2026-02-28T00:00:00.000Z",
+      "enabled": true
+    },
+    {
+      "skillId": "eqa-repo-standards",
+      "name": "eqa-repo-standards",
+      "description": "Enforces EQD-AI repository quality standards: syntax verification, test confirmation, selective staging, commit message format, and documentation updates. Use when preparing to commit code, after completing a sprint task, or when diagnosing a test failure. Triggers: \"commit\", \"push\", \"all tests green\", \"tests passing\", \"tests failing\", \"test failure\", \"git add\", \"ready to commit\", \"let's commit\", \"do commit\".",
+      "creatorType": "user",
+      "updatedAt": "2026-02-28T00:00:00.000Z",
+      "enabled": true
+    }
+  ]
+}
