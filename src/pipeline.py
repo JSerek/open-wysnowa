@@ -117,6 +117,57 @@ class EQDPipeline:
             f"{layer1_summary.get('batches_processed', 0)} batches"
         )
 
+        return self._run_from_signoff(results, layer1_summary, enable_hil)
+
+    def run_from_codebook(
+        self,
+        enable_hil: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Resume pipeline from an existing codebook — skips Layer 0 and Layer 1.
+
+        Use when ICs are already extracted in a prior run and you want to
+        re-run theme synthesis, metrics, and analyst without re-processing
+        documents. Requires a pre-populated database (use --db to point at it).
+
+        Args:
+            enable_hil: if True, interactive review at all HIL checkpoints
+
+        Returns comprehensive results dict (layer0/layer1 marked as skipped).
+        """
+        ic_count = len(self.layer1.ic_repo.get_all_active())
+        logger.info(
+            f"[PIPELINE] Resume mode: {ic_count} ICs found in DB. "
+            f"Skipping Layer 0 (preprocessing) and Layer 1 (extraction)."
+        )
+
+        results: Dict[str, Any] = {
+            "layer0": {"documents": 0, "segments": 0, "skipped": True},
+            "layer1": {"new_ics_created": 0, "skipped": True},
+            "codebook_signoff": False,
+            "layer2": {},
+            "layer3": {},
+        }
+
+        if ic_count == 0:
+            logger.warning("[PIPELINE] No ICs found in DB — nothing to synthesise. Aborting.")
+            return results
+
+        return self._run_from_signoff(results, {}, enable_hil)
+
+    def _run_from_signoff(
+        self,
+        results: Dict[str, Any],
+        layer1_summary: Dict[str, Any],
+        enable_hil: bool,
+    ) -> Dict[str, Any]:
+        """
+        Run all pipeline stages from codebook sign-off onward.
+
+        Shared entry point for run() (full pipeline) and run_from_codebook()
+        (resume mode). Called after Layer 0+1 are complete (or skipped).
+        Mutates and returns results.
+        """
         # ── Codebook Sign-Off (HIL Level 2) ──────────────────────────────
         if enable_hil:
             logger.info("[PIPELINE] Codebook sign-off (HIL Level 2)")

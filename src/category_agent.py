@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
@@ -28,6 +29,21 @@ from src.models import (
     Theme,
 )
 from src.prompts import build_category_system_prompt, build_category_user_prompt
+
+
+class _CategoryMergeNameOutput(BaseModel):
+    """Internal: LLM-proposed name and definition for a merged category."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=150,
+        description="Concise 2-5 word category label that captures the essence of both merged groups.",
+    )
+    definition: str = Field(
+        min_length=10,
+        max_length=800,
+        description="1-2 sentence definition covering all constituent themes from both merged categories.",
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -249,8 +265,7 @@ class CategoryAgent:
             current = proposals[i]
             current_centroid = centroids[i]
             theme_names = list(current.constituent_theme_names)
-            best_def = current.definition
-            best_name = current.name
+            merged_partners: List[Tuple[str, str]] = []  # (name, definition)
 
             for j in range(i + 1, len(proposals)):
                 if j in merged_indices:
@@ -269,15 +284,25 @@ class CategoryAgent:
                     )
                     merged_indices.add(j)
                     theme_names.extend(proposals[j].constituent_theme_names)
-                    # Keep longer definition
-                    if len(proposals[j].definition) > len(best_def):
-                        best_def = proposals[j].definition
-                        best_name = proposals[j].name
+                    merged_partners.append((proposals[j].name, proposals[j].definition))
+
+            if merged_partners:
+                # LLM rename: propose a semantically accurate merged name
+                merged_name, merged_def = self._llm_rename_merged(
+                    name_a=current.name,
+                    def_a=current.definition,
+                    name_b=merged_partners[0][0],
+                    def_b=merged_partners[0][1],
+                    theme_names=list(dict.fromkeys(theme_names)),
+                )
+            else:
+                merged_name = current.name
+                merged_def = current.definition
 
             merged_proposals.append(
                 CategoryProposal(
-                    name=best_name,
-                    definition=best_def,
+                    name=merged_name,
+                    definition=merged_def,
                     constituent_theme_names=list(dict.fromkeys(theme_names)),  # dedup
                 )
             )
@@ -376,6 +401,68 @@ class CategoryAgent:
             )
 
         return result_proposals, result_centroids
+
+    # ── LLM Rename ───────────────────────────────────────────────────────────
+
+    def _llm_rename_merged(
+        self,
+        name_a: str,
+        def_a: str,
+        name_b: str,
+        def_b: str,
+        theme_names: List[str],
+    ) -> Tuple[str, str]:
+        """
+        Propose a merged category name + definition via a short LLM call (~200 tokens).
+
+        Called when _merge_overlapping() collapses two semantically overlapping
+        categories. The LLM receives both original names/definitions and the
+        combined theme list, then proposes a single coherent label and definition.
+
+        Falls back to the longer-definition heuristic on any error.
+        """
+        agent_name = (
+            "category_agent"
+            if "category_agent" in self.config.agents
+            else "synthesizer_agent"
+        )
+        client, model_id, _ = self.model_client.get_client(agent_name)
+
+        themes_str = ", ".join(f'"{t}"' for t in theme_names)
+        system = (
+            "You are renaming a merged category. Two overlapping categories were "
+            "combined because their content was semantically similar. Propose a single "
+            "concise name (2-5 words) and a brief definition that covers both groups. "
+            "The name should be more accurate than either original."
+        )
+        user = (
+            f"Category A: '{name_a}'\n  Definition: {def_a}\n\n"
+            f"Category B: '{name_b}'\n  Definition: {def_b}\n\n"
+            f"Combined themes: {themes_str}\n\n"
+            f"Propose a single merged category name and definition."
+        )
+
+        try:
+            result = client.chat.completions.create(
+                model=model_id,
+                response_model=_CategoryMergeNameOutput,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.3,
+                max_tokens=200,
+            )
+            logger.info(f"[CAT:RENAME] '{name_a}' + '{name_b}' → '{result.name}'")
+            return result.name, result.definition
+        except Exception as e:
+            logger.warning(
+                f"[CAT:RENAME] LLM rename failed ({e}) — using heuristic fallback"
+            )
+            # Fall back: keep whichever definition is longer
+            if len(def_b) > len(def_a):
+                return name_b, def_b
+            return name_a, def_a
 
     # ── LLM Call ─────────────────────────────────────────────────────────────
 

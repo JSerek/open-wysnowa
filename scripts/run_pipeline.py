@@ -43,12 +43,15 @@ Examples:
   Full run:     python scripts/run_pipeline.py reviews.csv --limit 100
   Automated:    python scripts/run_pipeline.py reviews.csv --limit 100 --no-hil
   Compare:      python scripts/run_pipeline.py reviews.csv --limit 50 --db run_v2.db
+  Resume:       python scripts/run_pipeline.py --skip-extraction --db eqa_100.db
         """,
     )
 
     parser.add_argument(
         "csv_path",
-        help="Path to the Steam reviews CSV file",
+        nargs="?",
+        default=None,
+        help="Path to the Steam reviews CSV file (not required with --skip-extraction)",
     )
     parser.add_argument(
         "--limit",
@@ -80,6 +83,14 @@ Examples:
         help="Run without human-in-the-loop (auto-accept all decisions)",
     )
     parser.add_argument(
+        "--skip-extraction",
+        action="store_true",
+        help=(
+            "Skip Layer 0+1 (preprocessing + IC extraction) and resume from an "
+            "existing codebook. Requires --db pointing to a populated database."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
@@ -93,6 +104,13 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Validate args: csv_path required unless --skip-extraction
+    if args.skip_extraction:
+        if not args.db:
+            parser.error("--skip-extraction requires --db (path to an existing database)")
+    elif not args.csv_path:
+        parser.error("csv_path is required unless --skip-extraction is used")
 
     # Setup logging — semantic tags, silence noisy libraries
     logging.basicConfig(
@@ -113,54 +131,70 @@ Examples:
     else:
         db_path = "eqa_full.db"
 
-    # DB existence check — prevent accidental credit waste
     db_file = Path(db_path)
-    if db_file.exists():
-        size_kb = db_file.stat().st_size / 1024
-        print(f"\n⚠  Database already exists: {db_path} ({size_kb:.1f} KB)")
-        print(f"   [O] Overwrite — delete existing DB and start fresh")
-        print(f"   [B] Build upon — append to existing DB (incremental run)")
-        print(f"   [A] Abort — cancel and exit")
-        while True:
-            choice = input("   Choice [O/B/A]: ").strip().upper()
-            if choice == "O":
-                db_file.unlink()
-                print(f"   Deleted {db_path}. Starting fresh.\n")
-                break
-            elif choice == "B":
-                print(f"   Building upon existing DB.\n")
-                break
-            elif choice == "A":
-                print("   Aborted.")
-                sys.exit(0)
-            else:
-                print("   Please enter O, B, or A.")
-
-    # Load reviews
-    print(f"\n{'='*60}")
-    print(f"  EQD-AI Pipeline")
-    print(f"  Dataset: {args.csv_path}")
-    print(f"  Limit: {args.limit or 'all'}")
-    print(f"  Mode: {'Automated' if args.no_hil else 'Interactive (HIL)'}")
-    print(f"  Database: {db_path}")
-    print(f"{'='*60}\n")
-
-    docs = load_reviews(
-        args.csv_path,
-        limit=args.limit,
-        min_chars=args.min_chars,
-    )
-
-    if not docs:
-        print("No reviews loaded. Check your CSV path and filters.")
-        sys.exit(1)
-
-    # Run pipeline
-    config_path = Path(args.config) if args.config else None
-    pipeline = EQDPipeline(config_path=config_path, db_path=db_path)
-
     enable_hil = not args.no_hil
-    results = pipeline.run(docs, enable_hil=enable_hil)
+    config_path = Path(args.config) if args.config else None
+
+    if args.skip_extraction:
+        # Resume mode — DB must exist
+        if not db_file.exists():
+            print(f"\n✗  Database not found: {db_path}")
+            print(f"   --skip-extraction requires an existing, populated database.")
+            sys.exit(1)
+        size_kb = db_file.stat().st_size / 1024
+        print(f"\n{'='*60}")
+        print(f"  EQD-AI Pipeline  [RESUME MODE]")
+        print(f"  Database: {db_path} ({size_kb:.1f} KB)")
+        print(f"  Mode: {'Automated' if args.no_hil else 'Interactive (HIL)'}")
+        print(f"  Skipping: Layer 0 (preprocessing) + Layer 1 (IC extraction)")
+        print(f"{'='*60}\n")
+
+        pipeline = EQDPipeline(config_path=config_path, db_path=db_path)
+        results = pipeline.run_from_codebook(enable_hil=enable_hil)
+
+    else:
+        # Full run — DB existence check + load reviews
+        if db_file.exists():
+            size_kb = db_file.stat().st_size / 1024
+            print(f"\n⚠  Database already exists: {db_path} ({size_kb:.1f} KB)")
+            print(f"   [O] Overwrite — delete existing DB and start fresh")
+            print(f"   [B] Build upon — append to existing DB (incremental run)")
+            print(f"   [A] Abort — cancel and exit")
+            while True:
+                choice = input("   Choice [O/B/A]: ").strip().upper()
+                if choice == "O":
+                    db_file.unlink()
+                    print(f"   Deleted {db_path}. Starting fresh.\n")
+                    break
+                elif choice == "B":
+                    print(f"   Building upon existing DB.\n")
+                    break
+                elif choice == "A":
+                    print("   Aborted.")
+                    sys.exit(0)
+                else:
+                    print("   Please enter O, B, or A.")
+
+        print(f"\n{'='*60}")
+        print(f"  EQD-AI Pipeline")
+        print(f"  Dataset: {args.csv_path}")
+        print(f"  Limit: {args.limit or 'all'}")
+        print(f"  Mode: {'Automated' if args.no_hil else 'Interactive (HIL)'}")
+        print(f"  Database: {db_path}")
+        print(f"{'='*60}\n")
+
+        docs = load_reviews(
+            args.csv_path,
+            limit=args.limit,
+            min_chars=args.min_chars,
+        )
+
+        if not docs:
+            print("No reviews loaded. Check your CSV path and filters.")
+            sys.exit(1)
+
+        pipeline = EQDPipeline(config_path=config_path, db_path=db_path)
+        results = pipeline.run(docs, enable_hil=enable_hil)
 
     # Auto-export thematic structure to JSON next to the DB file
     structure = results.get("thematic_structure")
@@ -176,9 +210,12 @@ Examples:
     print(f"\n{'='*60}")
     print(f"  PIPELINE COMPLETE")
     print(f"{'='*60}")
-    print(f"  Documents:    {results['layer0'].get('documents', 0)}")
-    print(f"  Segments:     {results['layer0'].get('segments', 0)}")
-    print(f"  ICs created:  {results['layer1'].get('new_ics_created', 0)}")
+    if results.get("layer0", {}).get("skipped"):
+        print(f"  Mode:         Resume from existing codebook (Layer 0+1 skipped)")
+    else:
+        print(f"  Documents:    {results['layer0'].get('documents', 0)}")
+        print(f"  Segments:     {results['layer0'].get('segments', 0)}")
+        print(f"  ICs created:  {results['layer1'].get('new_ics_created', 0)}")
     print(f"  ICs merged:   {results['layer1'].get('merged', 0)}")
     print(f"  ICs rejected: {results['layer1'].get('rejected', 0)}")
     mean_conf = results['layer1'].get('mean_coder_confidence')

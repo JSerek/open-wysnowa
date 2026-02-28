@@ -195,9 +195,29 @@ class CategoryTheme(BaseModel):
 
 class CategoryProposal(BaseModel):
     """LLM response model: one proposed category."""
-    name: str = Field(min_length=1, max_length=150)
-    definition: str = Field(min_length=10, max_length=800)
-    constituent_theme_names: List[str] = Field(min_length=1)
+    name: str = Field(
+        min_length=1,
+        max_length=150,
+        description=(
+            "Short category label (2-5 words) representing the highest level of abstraction. "
+            "Use a noun phrase, not a sentence."
+        ),
+    )
+    definition: str = Field(
+        min_length=10,
+        max_length=800,
+        description=(
+            "1-2 sentence definition of what conceptually unifies these themes "
+            "at a higher level of abstraction than any individual theme."
+        ),
+    )
+    constituent_theme_names: List[str] = Field(
+        min_length=1,
+        description=(
+            "Exact names of themes from the provided input list. "
+            "Copy theme names verbatim — spelling and capitalisation must match exactly."
+        ),
+    )
 
 
 class CategorySynthesisOutput(BaseModel):
@@ -206,7 +226,13 @@ class CategorySynthesisOutput(BaseModel):
         min_length=10,
         description="Chain-of-thought: how themes were grouped into categories and why",
     )
-    categories: List[CategoryProposal] = Field(min_length=1)
+    categories: List[CategoryProposal] = Field(
+        min_length=1,
+        description=(
+            "All proposed categories. Every theme from the input list must appear "
+            "in exactly one category's constituent_theme_names."
+        ),
+    )
 
 
 # ── Audit & Quality ──────────────────────────────────────────────────────────
@@ -251,11 +277,39 @@ class ICCandidate(BaseModel):
     The LLM outputs a list of these per segment. Each must include
     an exact verbatim quote with character-level span offsets.
     """
-    ic_name: str = Field(min_length=1, max_length=120)
-    definition: str = Field(min_length=5, max_length=600)
-    quote_text: str = Field(min_length=1, description="Exact substring of canonical_text")
-    span_start: int = Field(ge=0)
-    span_end: int = Field(ge=1)
+    ic_name: str = Field(
+        min_length=1,
+        max_length=120,
+        description=(
+            "Short noun-phrase label for the concept (3-8 words). "
+            "Describe what the code represents, not the quote itself. "
+            "Do not use verbs as labels."
+        ),
+    )
+    definition: str = Field(
+        min_length=5,
+        max_length=600,
+        description=(
+            "One-sentence definition of what this code captures. "
+            "Must be directly grounded in the verbatim text — "
+            "do not infer beyond what is explicitly stated."
+        ),
+    )
+    quote_text: str = Field(
+        min_length=1,
+        description="Exact substring of canonical_text — copy verbatim, no paraphrasing",
+    )
+    span_start: int = Field(
+        ge=0,
+        description="Character offset of the start of quote_text in canonical_text (0-indexed, inclusive)",
+    )
+    span_end: int = Field(
+        ge=1,
+        description=(
+            "Character offset of the end of quote_text in canonical_text (exclusive). "
+            "Must satisfy: canonical_text[span_start:span_end] == quote_text exactly."
+        ),
+    )
     confidence: float = Field(ge=0.0, le=1.0, description="Model confidence 0-1")
     sentiment: Optional[Sentiment] = Field(
         default=None,
@@ -309,7 +363,14 @@ class ComparatorOutput(BaseModel):
 
     Used as response_model in the instructor call for comparison reasoning.
     """
-    recommendation: ComparatorRecommendation
+    recommendation: ComparatorRecommendation = Field(
+        description=(
+            "Your decision: NEW (add to codebook as a distinct concept), "
+            "MERGE (semantically equivalent to an existing code — same meaning or a "
+            "meaningful specialisation that doesn't warrant its own code), "
+            "or REJECT (not a valid analytical concept — meta-commentary, noise, or too vague)."
+        ),
+    )
     merge_target_name: Optional[str] = Field(
         default=None,
         description="Name of existing IC to merge into (if MERGE)",
@@ -358,7 +419,14 @@ class ThemeProposal(BaseModel):
     Quotes are inherited transitively (IC → VerbatimQuote), not re-extracted.
     """
     name: str = Field(min_length=1, max_length=80, description="Short descriptive label, 3-6 words")
-    definition: str = Field(min_length=10, max_length=1000)
+    definition: str = Field(
+        min_length=10,
+        max_length=1000,
+        description=(
+            "1-3 sentence definition of what conceptually unifies these ICs "
+            "at a higher level of abstraction. Describe the pattern, not just list the codes."
+        ),
+    )
     rationale: str = Field(
         min_length=5,
         description="Why these ICs form a coherent theme",
@@ -380,7 +448,13 @@ class SynthesisOutput(BaseModel):
         min_length=10,
         description="Chain-of-thought: clustering, labelling, redundancy check, coverage check",
     )
-    themes: List[ThemeProposal] = Field(min_length=1)
+    themes: List[ThemeProposal] = Field(
+        min_length=1,
+        description=(
+            "All proposed themes. Every active IC in the provided codebook "
+            "must appear in at least one theme's constituent_ic_names list."
+        ),
+    )
 
 
 class ThemeFeedbackOption(str, Enum):
@@ -418,7 +492,13 @@ class RevisionOutput(BaseModel):
 
     Used as response_model for rounds 2-3.
     """
-    themes: List[ThemeProposal] = Field(min_length=1)
+    themes: List[ThemeProposal] = Field(
+        min_length=1,
+        description=(
+            "Complete revised theme list. Include all themes — "
+            "both the ones you changed and the ones you left unchanged."
+        ),
+    )
     changes_summary: str = Field(
         min_length=5,
         description="Summary of changes made in response to feedback",
@@ -439,7 +519,13 @@ class DistinctnessRevisionOutput(BaseModel):
         min_length=10,
         description="Brief explanation of merge/sharpen decisions for each flagged pair",
     )
-    themes: List[ThemeProposal] = Field(min_length=1)
+    themes: List[ThemeProposal] = Field(
+        min_length=1,
+        description=(
+            "Complete revised theme list. Include all themes — "
+            "both the merged/sharpened ones and the unchanged ones."
+        ),
+    )
 
 
 class SplitProposal(BaseModel):
@@ -586,7 +672,13 @@ class MetricAssessment(BaseModel):
 
 class MetricsInterpretation(BaseModel):
     """Output of Call 1: metrics interpretation."""
-    assessments: List[MetricAssessment] = Field(min_length=1)
+    assessments: List[MetricAssessment] = Field(
+        min_length=1,
+        description=(
+            "One MetricAssessment per metric provided in the input. "
+            "Include every metric — do not skip any."
+        ),
+    )
     data_quality_summary: str = Field(
         min_length=50, max_length=800,
         description="Overall assessment of data integrity and codebook health",
@@ -660,8 +752,20 @@ class CategoryDiagnostic(BaseModel):
 
 class StructuralDiagnostics(BaseModel):
     """Output of Call 2: structural analysis."""
-    theme_diagnostics: List[ThemeDiagnostic] = Field(min_length=1)
-    category_diagnostics: List[CategoryDiagnostic] = Field(default_factory=list)
+    theme_diagnostics: List[ThemeDiagnostic] = Field(
+        min_length=1,
+        description=(
+            "One ThemeDiagnostic per theme. Assess every theme in the input list — "
+            "do not omit any, even if the theme appears healthy."
+        ),
+    )
+    category_diagnostics: List[CategoryDiagnostic] = Field(
+        default_factory=list,
+        description=(
+            "One CategoryDiagnostic per category. Include all categories if provided. "
+            "Empty list if no categories exist."
+        ),
+    )
     strongest_themes: List[str] = Field(
         description="Top themes by evidence quality + coherence",
     )
@@ -677,8 +781,12 @@ class StructuralDiagnostics(BaseModel):
 class ConfigRecommendation(BaseModel):
     """A specific configuration change suggestion."""
     parameter: str = Field(description="YAML config key, e.g. 'processing.category_merge_threshold'")
-    current_value: str
-    suggested_value: str
+    current_value: str = Field(
+        description="The parameter's current value, as a string (read from the config provided).",
+    )
+    suggested_value: str = Field(
+        description="The recommended new value, as a string.",
+    )
     rationale: str = Field(min_length=20, max_length=300)
 
 
