@@ -172,55 +172,39 @@ A reliability report: "Across 3 runs: 90% evidence overlap (quote level), alpha 
 
 ## Next Up
 
-### Coder Agent Confidence Metric `[ready]`
-**Problem:** `ICCandidate.confidence` (0–1, the coder's self-assessed certainty) is collected during Layer 1 but never stored on `InitialCode`, never aggregated, and never visible in Layer 3 metrics. All confidence signal evaporates after the triage decision.
+### Coder Agent Confidence Metric `[resolved]`
+Metric collection in place (Layer 3 `coder_confidence` dict with mean/min/max/low_count/ratio). Low-confidence IC IDs now tracked in `layer1_summary["low_confidence_ic_ids"]` and passed to codebook sign-off, where they appear as ⚑ flags in the display with a summary warning. Threshold: confidence < 0.6.
 
-**Fix:** (1) Add a `mean_coder_confidence` metric to Layer 3 — mean confidence across all accepted new IC candidates. (2) Flag low-confidence new ICs (< 0.6) for HIL review even if they pass the auto-triage threshold. (3) Include per-IC confidence in the codebook sign-off display so analysts know which codes the model was uncertain about.
+### SUBCODE Deprecation `[resolved]`
+Removed from `ComparatorRecommendation` enum, comparator prompt, and all downstream handlers. Committed in 364bb6b.
 
-### SUBCODE Deprecation `[ready]`
-**Problem:** `ComparatorRecommendation.SUBCODE` exists in the enum and may appear in comparator prompts, but has no handling branch in orchestrator.py. ICs are not hierarchical and never were. SUBCODE is dead code that creates confusing prompt signals.
+### Category Agent HIL Sign-Off `[resolved]`
+Single HIL checkpoint after `_validate_proposals()`. Committed in d5462fb.
 
-**Fix:** Remove `SUBCODE` from `ComparatorRecommendation` enum. Update the comparator system prompt to only output `NEW`, `MERGE`, or `REJECT`. Update the comparator agreement metric in `quality_metrics.py` (currently lumps SUBCODE with MERGE). Simple, low-risk.
+### Resume-from-Codebook Path `[resolved]`
+`--skip-extraction` flag + `run_from_codebook()` + shared `_run_from_signoff()`. Committed in ecebb4d.
 
-### Category Agent HIL Sign-Off `[ready]`
-**Problem:** Unlike theme synthesis (3 rounds, feedback, analyst sign-off), the Category Agent proposes and auto-validates categories with zero analyst input before DB persistence. If automatic merges or absorptions produce wrong categories (as seen in canon_30 where Core Gameplay Mechanics + World Design merged), there is no correction path without re-running.
+### Exhaustive Field descriptions `[resolved]`
+All LLM-facing Pydantic model fields have instruction-style descriptions. Committed in ecebb4d.
 
-**Fix:** Add a single HIL checkpoint after `_validate_proposals()` and before `persist()`: display proposed categories with their constituent themes, prompt for approval or abort. If HIL is disabled, auto-confirm. One prompt, no feedback loop needed — categories are high-level enough that a simple yes/no gate is sufficient.
+### Category Merge Threshold Tuning `[resolved]`
+`category_merge_threshold` raised from 0.85 to 0.90 in `eqd_config.yaml`. Committed in 5711ace.
 
-### Resume-from-Codebook Path `[ready]`
-**Problem:** HIL Level 2 codebook rejection stops the pipeline. The codebook is already in the DB, but the only recovery path is re-running Layers 0–1 from scratch — expensive and wasteful.
+### Category Merge LLM Rename `[resolved]`
+`_llm_rename_merged()` in `category_agent.py` — Haiku call proposes unified name after merge. Committed in ecebb4d.
 
-**Fix:** Add `--skip-extraction` flag to `run_pipeline.py` that jumps directly to the codebook sign-off check, using an existing DB. About 20 lines of code. This is a partial, lightweight precursor to Codebook Versioning's Discovery → Validation flow — useful now, not just when versioning lands.
-
-### Segment Faithfulness Scoring `[design]`
-**Problem:** The pipeline drops candidates at span validation, but we don't know whether the coder agent is systematically hallucinating spans for certain types of text. A per-segment faithfulness score (verified_quotes / total_candidates) would reveal: (a) segments that consistently cause span errors, (b) whether certain text patterns (long sentences, slang, mixed language) cause more hallucination.
-
-**Architecture:** Computed during Layer 1 as a byproduct of span validation. Aggregated as a new metric in Layer 3. Could feed into a "segment difficulty" heuristic that triggers slower/more careful coding for hard segments.
-
-### Exhaustive `Field(description=...)` on Pydantic Models `[ready]`
-**Problem:** Several Pydantic models used as Instructor `response_model` targets have fields with no or minimal `Field(description="...")`. In MD_JSON mode, field descriptions are injected into the LLM's context — they're effectively part of the prompt. Sparse descriptions mean the LLM has less signal about what to produce, increasing validation failures and off-target outputs.
-
-**Fix:** Audit `ThemeIC`, `CategoryTheme`, `MetricAssessment`, `ConfigRecommendation`, `ComparatorOutput`, and `OrphanDisposition` for missing or thin descriptions. Add specific, instruction-style descriptions to every field that an LLM must populate. Focus on fields with semantic ambiguity (e.g., `is_isolated`, `round_finalised`, `merge_target_name`). No behaviour change — purely improves structured output reliability.
+### thematic_structure Auto-Export `[resolved]`
+`run_pipeline.py` auto-writes `{db_stem}_thematic_structure.json` at end of each run.
 
 ### Coder Agent Batch Fallback — Targeted Retry `[ready]`
 **Problem:** When the coder's batch response fails Pydantic validation (malformed JSON, missing required fields), the current fallback re-runs every segment in the batch individually. If 1 of 8 segments caused the failure, we're doing 7 unnecessary solo LLM calls.
 
 **Fix:** Parse the `ValidationError` to identify which segment IDs failed. Retry only those in singular mode via tenacity exponential backoff. Segments that passed validation are kept. This is more efficient and uses tenacity as designed — targeted retry on the actual failure point, not a full batch reset. Requires reading the current fallback logic in `coder_agent.py` carefully before implementing.
 
-### Category Merge Threshold Tuning `[ready]`
-**Problem:** The 30-review test run merged "Core Gameplay Mechanics" + "World Design & Content Structure" at sim=0.867 with threshold 0.85. These are analytically distinct categories. The threshold is too aggressive.
+### Segment Faithfulness Scoring `[design]`
+**Problem:** The pipeline drops candidates at span validation, but we don't know whether the coder agent is systematically hallucinating spans for certain types of text. A per-segment faithfulness score (verified_quotes / total_candidates) would reveal: (a) segments that consistently cause span errors, (b) whether certain text patterns (long sentences, slang, mixed language) cause more hallucination.
 
-**Fix:** Raise `category_merge_threshold` from 0.85 to 0.90 in `eqd_config.yaml`. Consider making category merging HIL-gated (analyst confirms merges) rather than fully automated.
-
-### Category Merge LLM Rename `[ready]`
-**Problem:** When the Category Agent merges two overlapping categories, it keeps "the longer definition" heuristically and picks the longer name. The result is often a poorly named merged category — it inherits one parent's name without reflecting the combined concept.
-
-**Fix:** After a merge, make a short LLM call (haiku, ~200 tokens) with: "Category A: {name_a} — Category B: {name_b} — Definition: {combined_def}. Propose a concise name (≤8 words) that covers both." Replace the heuristic with the LLM-proposed name. Applies only to merged categories, not absorbed singletons.
-
-### thematic_structure Auto-Export `[ready]`
-**Problem:** The full thematic structure (JSON: categories → themes → ICs → quotes) is built at the end of each run and held in memory, but never written to disk automatically. It is only available during the live terminal session. The analyst must manually request the export or the data is lost when the process exits.
-
-**Fix:** Auto-write `thematic_structure.json` to the run directory at the end of each pipeline run (next to the `.db` file). Optionally, write a human-readable `thematic_structure.md` with indented hierarchy. ~5 lines of code in `pipeline.py` or `run_pipeline.py`.
+**Architecture:** Computed during Layer 1 as a byproduct of span validation. Aggregated as a new metric in Layer 3. Could feed into a "segment difficulty" heuristic that triggers slower/more careful coding for hard segments.
 
 ### Re-run Detection After Codebook Rejection `[design]`
 **Problem:** When codebook sign-off is rejected (HIL Level 2), the ICs and quotes are already committed to the DB. If the analyst re-runs with "Build upon" instead of "Overwrite," the pipeline resumes with rejected data silently — it has no way to detect that the previous run ended in rejection.
@@ -291,4 +275,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-02-28 — Added to Next Up: Exhaustive Field descriptions [ready], Coder Agent Batch Fallback targeted retry [ready]. Immutability fix (append-only IC rows) bundled under Codebook Versioning — not standalone. SUBCODE removed from codebase (models.py, prompts.py, orchestrator.py, hil.py, codebook_comparator.py, quality_metrics.py) — comparator now uses NEW/MERGE/REJECT only. Added to Next Up: Coder Agent Confidence Metric, Category Merge LLM Rename, thematic_structure Auto-Export, Re-run Detection After Codebook Rejection. Added to Other Ideas: Visual Segment Inspection UI, Overlapping Span Rate Diagnostic (baseline: near-zero), Alternative Qualitative Methodologies. IC sentiment not stored on initial_codes — quote-level sentiment + Theme Sentiment Purity covers the signal.*
+*Last updated: 2026-02-28 — Archived resolved items: SUBCODE Deprecation, Category HIL Sign-Off, Resume-from-Codebook, Exhaustive Field descriptions, Category Merge Threshold Tuning, Category Merge LLM Rename, thematic_structure Auto-Export, Coder Agent Confidence Metric (⚑ flag at sign-off, low_confidence_ic_ids tracked in layer1_summary). Four workflow skills committed to skills/ (eqa-decision-protocol, eqa-ideas-maintenance, eqa-arch-review, eqa-repo-standards). Remaining ready: Coder Agent Batch Fallback targeted retry. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*

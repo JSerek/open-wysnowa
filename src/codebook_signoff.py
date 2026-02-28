@@ -40,8 +40,12 @@ THIN_SEP = "-" * 70
 def display_codebook_summary(
     codebook: List[InitialCode],
     quote_counts: Dict[str, int],
+    low_confidence_ic_ids: Optional[set] = None,
 ) -> None:
-    """Display the full codebook with evidence counts."""
+    """Display the full codebook with evidence counts and confidence flags."""
+    if low_confidence_ic_ids is None:
+        low_confidence_ic_ids = set()
+
     print(f"\n{SEPARATOR}")
     print(f"  CODEBOOK SIGN-OFF — {len(codebook)} active Initial Codes")
     print(SEPARATOR)
@@ -52,8 +56,9 @@ def display_codebook_summary(
 
     for i, ic in enumerate(codebook, 1):
         qcount = quote_counts.get(ic.id, 0)
-        flag = " ⚠" if qcount < 3 else ""
-        print(f"\n  [{i:3d}] {ic.name}{flag}")
+        evidence_flag = " ⚠" if qcount < 3 else ""
+        confidence_flag = " ⚑" if ic.id in low_confidence_ic_ids else ""
+        print(f"\n  [{i:3d}] {ic.name}{evidence_flag}{confidence_flag}")
         print(f"        Definition: {ic.definition}")
         print(f"        Evidence: {qcount} quote(s)")
 
@@ -64,6 +69,12 @@ def display_codebook_summary(
     if thin_evidence:
         print(f"\n  ⚠ {len(thin_evidence)} code(s) have thin evidence (<3 quotes):")
         for name in thin_evidence:
+            print(f"    - {name}")
+
+    low_conf_names = [ic.name for ic in codebook if ic.id in low_confidence_ic_ids]
+    if low_conf_names:
+        print(f"\n  ⚑ {len(low_conf_names)} code(s) flagged low-confidence (<60%) by coder agent:")
+        for name in low_conf_names:
             print(f"    - {name}")
 
 
@@ -139,17 +150,24 @@ class CodebookSignoff:
         self.vq_repo = VerbatimQuoteRepo(db)
         self.decision_repo = DecisionLogRepo(db)
 
-    def run(self) -> bool:
+    def run(self, low_confidence_ic_ids: Optional[List[str]] = None) -> bool:
         """
         Interactive codebook sign-off loop.
 
+        Args:
+            low_confidence_ic_ids: IC IDs whose coder confidence was below 0.6.
+                These are flagged with ⚑ in the codebook display so the analyst
+                knows to review them before signing off.
+
         Returns True if signed off, False if quit without sign-off.
         """
+        flagged: set = set(low_confidence_ic_ids) if low_confidence_ic_ids else set()
+
         while True:
             codebook = self.ic_repo.get_all_active()
             quote_counts = self._get_quote_counts(codebook)
 
-            display_codebook_summary(codebook, quote_counts)
+            display_codebook_summary(codebook, quote_counts, flagged)
 
             action = prompt_signoff_action()
 

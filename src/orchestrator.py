@@ -278,6 +278,8 @@ class Layer1Orchestrator:
             "meta_flagged": 0,
             # Coder confidence — collected for new ICs only (not merges or rejects)
             "new_ic_confidences": [],
+            # IDs of new ICs whose coder confidence fell below 0.6 — surfaced at sign-off
+            "low_confidence_ic_ids": [],
         }
 
         batch_num = 0
@@ -441,6 +443,8 @@ class Layer1Orchestrator:
                     # Track coder confidence for this accepted IC
                     if hasattr(cand, "confidence") and cand.confidence is not None:
                         summary["new_ic_confidences"].append(cand.confidence)
+                        if cand.confidence < 0.6 and new_ic_id:
+                            summary["low_confidence_ic_ids"].append(new_ic_id)
                     # Track cumulative saturation: which segment introduced this IC
                     seg_idx = segment_indices.get(seg_id)
                     if seg_idx is not None:

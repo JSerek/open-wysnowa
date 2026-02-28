@@ -171,7 +171,8 @@ class EQDPipeline:
         # ── Codebook Sign-Off (HIL Level 2) ──────────────────────────────
         if enable_hil:
             logger.info("[PIPELINE] Codebook sign-off (HIL Level 2)")
-            signed_off = self.signoff.run()
+            low_conf_ids = layer1_summary.get("low_confidence_ic_ids", [])
+            signed_off = self.signoff.run(low_confidence_ic_ids=low_conf_ids)
             results["codebook_signoff"] = signed_off
 
             if not signed_off:
