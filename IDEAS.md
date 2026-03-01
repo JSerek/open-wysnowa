@@ -249,7 +249,7 @@ Prevents accidental merges, especially as the codebook grows and the numbered li
 
 **File:** `src/hil.py` — `prompt_decision()`, add confirmation loop after M-input parsing.
 
-### HIL: Quote Span Editing — Bracket Slicer `[design]`
+### HIL: Quote Span Editing — Bracket Slicer `[later]`
 Extend `[E]` edit mode to allow interactive span adjustment using movable `[` `]` bracket markers. Target UX: display the quote ± one sentence of context, analyst moves bracket positions using arrow keys, presses Enter to confirm. System computes `span_start`/`span_end` from final bracket positions. Works for both trimming and expanding.
 
 **Requires `prompt_toolkit`** — a well-maintained Python library (used by IPython) that gives full cursor control and key bindings in the terminal. Not achievable with bare `input()`. New dependency, real testing overhead on different terminal configs — hence `[design]` rather than `[ready]`.
