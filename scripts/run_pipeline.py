@@ -218,11 +218,17 @@ Examples:
         print(f"  ICs created:  {results['layer1'].get('new_ics_created', 0)}")
     print(f"  ICs merged:   {results['layer1'].get('merged', 0)}")
     print(f"  ICs rejected: {results['layer1'].get('rejected', 0)}")
-    mean_conf = results['layer1'].get('mean_coder_confidence')
-    low_conf = results['layer1'].get('low_confidence_ic_count', 0)
-    if mean_conf is not None:
-        low_str = f"  ({low_conf} low-confidence)" if low_conf else ""
-        print(f"  Confidence:   {mean_conf:.2f} mean{low_str}")
+    conf = results.get('layer3', {}).get('coder_confidence', {})
+    if conf and conf.get('mean_confidence') is not None:
+        mean_c = conf['mean_confidence']
+        sd_c   = conf.get('sd_confidence', 0.0)
+        q1_c   = conf.get('q1_confidence')
+        q2_c   = conf.get('q2_confidence')
+        q3_c   = conf.get('q3_confidence')
+        low_n  = conf.get('low_confidence_count', 0)
+        low_str = f"  ({low_n} low-confidence)" if low_n else ""
+        dist_str = f"  Q1={q1_c:.2f}  Q2={q2_c:.2f}  Q3={q3_c:.2f}" if q1_c is not None else ""
+        print(f"  Confidence:   {mean_c:.2f} mean  sd={sd_c:.2f}{dist_str}{low_str}")
     meta_f = results['layer1'].get('meta_filtered', 0)
     meta_fl = results['layer1'].get('meta_flagged', 0)
     if meta_f or meta_fl:

@@ -64,17 +64,24 @@ def display_codebook_report(metrics: Dict[str, Any]) -> None:
         print(f"\n  {SECTION_SEP}")
         print(f"  CODER CONFIDENCE")
         mean_c = conf["mean_confidence"]
-        low_n = conf.get("low_confidence_count", 0)
+        sd_c   = conf.get("sd_confidence", 0.0)
+        q1_c   = conf.get("q1_confidence")
+        q2_c   = conf.get("q2_confidence")
+        q3_c   = conf.get("q3_confidence")
+        iqr_c  = conf.get("iqr_confidence", 0.0)
+        low_n  = conf.get("low_confidence_count", 0)
         total_n = conf.get("total_new_ics", 0)
         low_ratio = conf.get("low_confidence_ratio", 0.0)
         label = "high" if mean_c >= 0.8 else "moderate" if mean_c >= 0.6 else "LOW ⚠"
-        print(f"    Mean confidence: {mean_c:.2f} ({label})")
-        print(f"    Range:           {conf.get('min_confidence', 0):.2f} – {conf.get('max_confidence', 0):.2f}")
+        print(f"    mean={mean_c:.2f} ({label})  sd={sd_c:.2f}")
+        if q1_c is not None:
+            print(f"    Q1={q1_c:.2f}  Q2={q2_c:.2f}  Q3={q3_c:.2f}  IQR={iqr_c:.2f}")
+        print(f"    range=[{conf.get('min_confidence', 0):.2f}, {conf.get('max_confidence', 0):.2f}]  n={total_n}")
         if low_n:
             flag = " ⚠ review these ICs" if low_ratio > 0.20 else ""
-            print(f"    Low-confidence (<0.6): {low_n}/{total_n} ({low_ratio:.0%}){flag}")
+            print(f"    low-confidence (<0.6): {low_n}/{total_n} ({low_ratio:.0%}){flag}")
         else:
-            print(f"    Low-confidence (<0.6): none")
+            print(f"    low-confidence (<0.6): none")
 
     # ITS curve
     its_history: List[BatchITS] = metrics.get("its_history", [])

@@ -170,6 +170,33 @@ A reliability report: "Across 3 runs: 90% evidence overlap (quote level), alpha 
 
 ---
 
+## Model Evaluation Harness / Leaderboard `[design]`
+
+### Vision
+A structured benchmark system for comparing model configurations across pipeline runs. Uses `canonical_30` as a fixed reference dataset. Produces a table where each row is a model configuration and columns are the 18 quality metrics — no single aggregate score, just the full profile.
+
+### Leaderboard structure
+- **Rows:** model configuration (e.g., `or_fast=gpt-5-nano, or_smart=gemini-3-flash-preview`)
+- **Columns:** all 18 point-estimate metrics (grounding, drop_rate, extraction_density, singleton_ratio, triage_auto_rate, comparator_agreement, its_final, theme_coherence, theme_distinctness, sentiment_purity, thematic_coverage, cross_review_convergence, merge_rate, ic_stability, meaning_saturation_breadth, meaning_saturation_spread, coherence_normalized, coder_confidence_mean)
+- **Reliability columns:** `coder_reliability`, `synthesizer_reliability`, `analyst_reliability` — populated only after N stability runs for that config; blank otherwise. Computed as SD of key layer metrics across N runs.
+- **No aggregate score yet.** Read the full profile. Per-layer weighted aggregation is a later addition once we understand which metrics carry signal vs. noise.
+
+### Stability-first methodology
+Cross-model comparison is only meaningful once within-config variance is known. If model A scores 0.65 coherence and model B scores 0.70, the difference is uninterpretable without the SD of each. Correct workflow:
+1. Pick a config. Run canonical_30 N times (3–5). Compute metric SDs → populate reliability columns.
+2. Only then compare configs against each other.
+
+### Metric co-variance — document, don't fight
+Several metric pairs are structurally linked and must be read together, never in isolation:
+- `extraction_density` ↔ `singleton_ratio`: high extraction → more unique codes → higher singleton ratio. A model that extracts aggressively will look worse on singleton_ratio regardless of quality.
+- `merge_rate` ↔ `triage_auto_rate`: high auto-rate looks efficient but if merge_rate is near zero, the comparator is rubber-stamping everything as NEW. Read as a system, not separately.
+
+### Sample size confound
+`singleton_ratio` (and `cross_review_convergence`) are partly data-volume artifacts. At 30 reviews, almost any model will show high singleton_ratio — patterns haven't had enough repetition to consolidate. When scaling to 100+ reviews, these metrics will shift substantially. **30-review leaderboard scores are not directly comparable to 100-review scores for these metrics.** Hold sample size constant (canonical_30) across all leaderboard runs and document this limitation explicitly in any report.
+
+### canonical_30 as permanent benchmark
+All leaderboard runs against canonical_30 only. It's fixed, validated, and small enough to run cheaply. Never swap the benchmark dataset mid-leaderboard — that invalidates all historical rows.
+
 ## Next Up
 
 ### Coder Agent Confidence Metric `[resolved]`

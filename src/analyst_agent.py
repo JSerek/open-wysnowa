@@ -114,6 +114,22 @@ class AnalystAgent:
         n_cats = len(ts)
         n_themes = sum(len(c.get("themes", [])) for c in ts)
 
+        # Confidence distribution summary — pass aggregates only (not per-IC)
+        conf = layer3.get("coder_confidence", {})
+        conf_summary = None
+        if conf and conf.get("mean_confidence") is not None:
+            conf_summary = {
+                "mean": conf.get("mean_confidence"),
+                "sd": conf.get("sd_confidence"),
+                "q1": conf.get("q1_confidence"),
+                "q2": conf.get("q2_confidence"),
+                "q3": conf.get("q3_confidence"),
+                "iqr": conf.get("iqr_confidence"),
+                "low_count": conf.get("low_confidence_count"),
+                "low_ratio": conf.get("low_confidence_ratio"),
+                "total_ics": conf.get("total_new_ics"),
+            }
+
         run_summary = {
             "n_documents": layer0.get("documents", 0),
             "n_segments": layer0.get("segments", 0),
@@ -121,6 +137,7 @@ class AnalystAgent:
             "n_themes": n_themes,
             "n_categories": n_cats,
             "drop_rate": drop_rate,
+            "coder_confidence": conf_summary,
         }
 
         system_prompt = build_metrics_interpretation_system_prompt()

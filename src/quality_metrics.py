@@ -30,6 +30,8 @@ Results are persisted to the quality_metrics table.
 from __future__ import annotations
 
 import logging
+import math
+import statistics as _stats
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.db import (
@@ -301,6 +303,11 @@ class QualityMetricsEngine:
         if not confidences:
             return {
                 "mean_confidence": None,
+                "sd_confidence": None,
+                "q1_confidence": None,
+                "q2_confidence": None,
+                "q3_confidence": None,
+                "iqr_confidence": None,
                 "min_confidence": None,
                 "max_confidence": None,
                 "low_confidence_count": 0,
@@ -310,8 +317,28 @@ class QualityMetricsEngine:
 
         n = len(confidences)
         low = [c for c in confidences if c < 0.6]
+        mean = sum(confidences) / n
+        sd = _stats.stdev(confidences) if n > 1 else 0.0
+
+        # Quartiles — statistics.quantiles requires n >= 2 for quartile interpolation
+        if n >= 4:
+            qs = _stats.quantiles(confidences, n=4)
+            q1, q2, q3 = qs[0], qs[1], qs[2]
+        elif n >= 2:
+            sorted_c = sorted(confidences)
+            q1 = sorted_c[0]
+            q2 = _stats.median(confidences)
+            q3 = sorted_c[-1]
+        else:
+            q1 = q2 = q3 = confidences[0]
+
         result = {
-            "mean_confidence": round(sum(confidences) / n, 4),
+            "mean_confidence": round(mean, 4),
+            "sd_confidence": round(sd, 4),
+            "q1_confidence": round(q1, 4),
+            "q2_confidence": round(q2, 4),
+            "q3_confidence": round(q3, 4),
+            "iqr_confidence": round(q3 - q1, 4),
             "min_confidence": round(min(confidences), 4),
             "max_confidence": round(max(confidences), 4),
             "low_confidence_count": len(low),
