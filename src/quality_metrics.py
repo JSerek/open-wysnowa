@@ -319,7 +319,9 @@ class QualityMetricsEngine:
             "total_new_ics": n,
         }
 
-        self._persist_metric("coder_confidence", result)
+        # coder_confidence is a multi-field dict, not a single float, so it doesn't
+        # map to QualityMetric (float value). compute_all() stores it in results["coder_confidence"]
+        # which is written to the JSON results file — no separate DB persistence needed.
         return result
 
     def compute_grounding(self) -> Dict[str, Any]:
