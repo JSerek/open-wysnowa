@@ -249,17 +249,36 @@ Prevents accidental merges, especially as the codebook grows and the numbered li
 
 **File:** `src/hil.py` — `prompt_decision()`, add confirmation loop after M-input parsing.
 
-### HIL: Quote Span Editing `[ready]`
-Extend the `[E]` edit mode to allow span adjustment without character counting. Flow:
-1. Display the full segment text so the analyst has the source to read from.
-2. Show the current extracted quote.
-3. Prompt: `Enter new quote text (or Enter to keep):` — analyst types or pastes the exact text they want.
-4. System searches for the typed text in the segment (`segment_text.find(new_quote)`), validates it exists, and sets `span_start`/`span_end` automatically.
-5. If not found, print an error and re-prompt.
+### HIL: Quote Span Editing — Bracket Slicer `[design]`
+Extend `[E]` edit mode to allow interactive span adjustment using movable `[` `]` bracket markers. Target UX: display the quote ± one sentence of context, analyst moves bracket positions using arrow keys, presses Enter to confirm. System computes `span_start`/`span_end` from final bracket positions. Works for both trimming and expanding.
 
-Works for both trimming (type a shorter substring) and expanding (type a longer substring). No character counting required. Fails gracefully with a clear error if the typed text isn't in the segment.
+**Requires `prompt_toolkit`** — a well-maintained Python library (used by IPython) that gives full cursor control and key bindings in the terminal. Not achievable with bare `input()`. New dependency, real testing overhead on different terminal configs — hence `[design]` rather than `[ready]`.
 
-**File:** `src/hil.py` — `prompt_edit_candidate()`, add quote editing block after name/definition editing.
+**Interim fallback (numbered words):** While prompt_toolkit is not yet implemented, `[E]` could offer a numbered-word display where each token is prefixed with its index. Analyst types start and end word numbers; script finds character positions. Practical up to ~40 words, breaks down on long segments, has edge cases with punctuation and repeated words. Not worth implementing standalone — only as a stepping stone toward the bracket slicer.
+
+**Rejected approach:** "Type the exact quote you want" (substring search). Rejected because it requires humans to recall verbatim text precisely, which is harder and more error-prone than LLM extraction. The bracket slicer or word-index fallback are both preferable.
+
+**File:** `src/hil.py` — `prompt_edit_candidate()`, add span editing block after name/definition editing.
+
+### Coder Agent Confidence — Redefinition `[ready]`
+Redefine what confidence measures: **how certain the coder is that this concept is not already covered by any existing IC in the codebook at the time of extraction.** Confidence in the novelty claim, not in span accuracy (covered by grounding) or definition quality (changes post-refinement).
+
+This makes confidence stable (codebook state at creation is fixed), actionable (low confidence = model sensed borderline overlap with existing codes), and non-redundant with other checks.
+
+**Implementation:** Update the coder system prompt to give explicit criteria: *"Rate your confidence (0–1) that this concept is genuinely not captured by any existing IC in the current codebook. 1.0 = clearly new phenomenon. 0.5 = uncertain — could overlap with an existing code. 0.0 = almost certainly a duplicate."* Also update the `ICCandidate.confidence` field description to match.
+
+**Files:** `src/prompts.py` — `build_coder_system_prompt()`. `src/models.py` — `ICCandidate.confidence` field description.
+
+### Coder Reuse Rate Diagnostic `[ready]`
+Track whether the Coder Agent actually reuses existing IC names when the codebook has entries, rather than always proposing new codes regardless of the injected codebook.
+
+**Metric:** Of all candidates in a batch, what % had `existing_code_match` set (coder tried to reuse) vs null (coder proposed new)? Cross-tab with comparator decision: of those the coder flagged as matches, how many did the comparator confirm as MERGE vs flip to NEW? Of those the coder said were new (null), how many did the comparator flip to MERGE?
+
+This 2×2 matrix reveals: (a) whether the codebook injection is working — a well-calibrated coder should flag more matches as the codebook grows; (b) whether coder and comparator agree on boundaries — systematic disagreement signals prompt misalignment between the two agents.
+
+**Implementation:** Collect `existing_code_match` is-not-null counts in `orchestrator.py` during batch processing. Add to `triage_stats` summary. Report in Layer 3 metrics or batch log. Cross-tab against comparator decisions is already available in `grey_zone_decisions` and the merge/new counters.
+
+**Files:** `src/orchestrator.py` — batch processing loop. `src/quality_metrics.py` — new diagnostic field. `src/quality_report.py` — display.
 
 ### Coder Agent Confidence Metric `[resolved]`
 Metric collection in place (Layer 3 `coder_confidence` dict with mean/min/max/low_count/ratio). Low-confidence IC IDs now tracked in `layer1_summary["low_confidence_ic_ids"]` and passed to codebook sign-off, where they appear as ⚑ flags in the display with a summary warning. Threshold: confidence < 0.6.
