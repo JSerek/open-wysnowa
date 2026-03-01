@@ -288,6 +288,15 @@ class Layer1Orchestrator:
             "new_ic_confidences": [],
             # IDs of new ICs whose coder confidence fell below 0.6 — surfaced at sign-off
             "low_confidence_ic_ids": [],
+            # Coder reuse rate: tracks coder-codebook alignment
+            # coder_flagged_match: existing_code_match set → bypassed comparator, auto-merged
+            # coder_new_comp_new: coder said new → comparator confirmed NEW
+            # coder_new_comp_merge: coder said new → comparator flipped to MERGE
+            # coder_new_comp_reject: coder said new → rejected (HIL or auto)
+            "coder_flagged_match": 0,
+            "coder_new_comp_new": 0,
+            "coder_new_comp_merge": 0,
+            "coder_new_comp_reject": 0,
         }
 
         batch_num = 0
@@ -333,6 +342,7 @@ class Layer1Orchestrator:
                 if quote:
                     deferred_quotes.append(quote)
                 summary["existing_matches"] += 1
+                summary["coder_flagged_match"] += 1
 
             # ── 4. Pre-embed all new candidate texts (1 batch API call) ──
             batch_new_count = 0
@@ -448,6 +458,7 @@ class Layer1Orchestrator:
                 if result == "new":
                     summary["new_ics_created"] += 1
                     batch_new_count += 1
+                    summary["coder_new_comp_new"] += 1
                     # Track coder confidence for this accepted IC
                     if hasattr(cand, "confidence") and cand.confidence is not None:
                         summary["new_ic_confidences"].append(cand.confidence)
@@ -464,8 +475,10 @@ class Layer1Orchestrator:
                 elif result == "merge":
                     summary["merged"] += 1
                     batch_merge_count += 1
+                    summary["coder_new_comp_merge"] += 1
                 elif result == "reject":
                     summary["rejected"] += 1
+                    summary["coder_new_comp_reject"] += 1
 
             # Record per-batch merge rate
             self.batch_merge_rates.append({

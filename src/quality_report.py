@@ -83,6 +83,27 @@ def display_codebook_report(metrics: Dict[str, Any]) -> None:
         else:
             print(f"    low-confidence (<0.6): none")
 
+    # Coder Reuse Rate (2×2 matrix)
+    reuse = metrics.get("coder_reuse", {})
+    if reuse:
+        flagged  = reuse.get("flagged_match", 0)
+        new_new  = reuse.get("new_comp_new", 0)
+        new_mrg  = reuse.get("new_comp_merge", 0)
+        new_rej  = reuse.get("new_comp_reject", 0)
+        total_new_path = new_new + new_mrg + new_rej
+        total = flagged + total_new_path
+        if total > 0:
+            print(f"\n  {SECTION_SEP}")
+            print(f"  CODER REUSE RATE")
+            print(f"    Coder flagged existing (bypass comparator):  {flagged:4d}  ({flagged/total:.0%})")
+            print(f"    Coder said NEW → comparator NEW:             {new_new:4d}  ({new_new/total:.0%})")
+            print(f"    Coder said NEW → comparator MERGE:           {new_mrg:4d}  ({new_mrg/total:.0%})")
+            print(f"    Coder said NEW → comparator REJECT:          {new_rej:4d}  ({new_rej/total:.0%})")
+            if total_new_path > 0:
+                flip_rate = (new_mrg + new_rej) / total_new_path
+                flag = " ⚠ coder over-generates" if flip_rate > 0.40 else ""
+                print(f"    Comparator flip rate (merge+reject / new-path): {flip_rate:.0%}{flag}")
+
     # ITS curve
     its_history: List[BatchITS] = metrics.get("its_history", [])
     if its_history:

@@ -236,12 +236,24 @@ class CoderAgent:
             results[segment.id] = validated
             self.last_drop_counts[segment.id] = n_dropped
 
-        # Check for segments that got no results from the batch
+        # Targeted retry: segments missing from batch response → retry individually
+        responded_ids = {sr.segment_id for sr in result.segment_results}
         for seg in segments:
-            if seg.id not in [sr.segment_id for sr in result.segment_results]:
+            if seg.id not in responded_ids:
                 logger.warning(
-                    f"Batch response missing segment {seg.id} — no candidates extracted"
+                    f"Batch response missing segment {seg.id} — retrying individually"
                 )
+                validated, n_dropped = self._code_segment(seg, codebook_context)
+                results[seg.id] = validated
+                self.last_drop_counts[seg.id] = n_dropped
+                if validated:
+                    logger.info(
+                        f"Targeted retry recovered {len(validated)} candidates for {seg.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Targeted retry found no candidates for {seg.id}"
+                    )
 
         return results
 

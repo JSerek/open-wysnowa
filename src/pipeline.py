@@ -322,6 +322,10 @@ class EQDPipeline:
             dropped_per_segment=layer1_summary.get("dropped_per_segment", {}),
             ic_stability_scores=layer1_summary.get("ic_stability_scores", []),
             new_ic_confidences=layer1_summary.get("new_ic_confidences", []),
+            coder_flagged_match=layer1_summary.get("coder_flagged_match", 0),
+            coder_new_comp_new=layer1_summary.get("coder_new_comp_new", 0),
+            coder_new_comp_merge=layer1_summary.get("coder_new_comp_merge", 0),
+            coder_new_comp_reject=layer1_summary.get("coder_new_comp_reject", 0),
         )
 
         # Add cumulative saturation curve from Layer 1

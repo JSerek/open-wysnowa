@@ -251,25 +251,19 @@ Extend `[E]` edit mode to allow interactive span adjustment using movable `[` `]
 
 **File:** `src/hil.py` — `prompt_edit_candidate()`, add span editing block after name/definition editing.
 
-### Coder Agent Confidence — Redefinition `[ready]`
+### Coder Agent Confidence — Redefinition `[resolved]`
 Redefine what confidence measures: **how certain the coder is that this concept is not already covered by any existing IC in the codebook at the time of extraction.** Confidence in the novelty claim, not in span accuracy (covered by grounding) or definition quality (changes post-refinement).
 
 This makes confidence stable (codebook state at creation is fixed), actionable (low confidence = model sensed borderline overlap with existing codes), and non-redundant with other checks.
 
-**Implementation:** Update the coder system prompt to give explicit criteria: *"Rate your confidence (0–1) that this concept is genuinely not captured by any existing IC in the current codebook. 1.0 = clearly new phenomenon. 0.5 = uncertain — could overlap with an existing code. 0.0 = almost certainly a duplicate."* Also update the `ICCandidate.confidence` field description to match.
+**Implementation:** Updated `ICCandidate.confidence` and `InitialCode.confidence` field descriptions in `src/models.py`. Added rule #12 ASSESS NOVELTY CONFIDENCE to coder system prompt in `src/prompts.py` with explicit calibration scale (1.0 = clearly new, 0.5 = uncertain, 0.0 = near-duplicate). Updated few-shot example confidence scores to reflect novelty semantics.
 
-**Files:** `src/prompts.py` — `build_coder_system_prompt()`. `src/models.py` — `ICCandidate.confidence` field description.
-
-### Coder Reuse Rate Diagnostic `[ready]`
+### Coder Reuse Rate Diagnostic `[resolved]`
 Track whether the Coder Agent actually reuses existing IC names when the codebook has entries, rather than always proposing new codes regardless of the injected codebook.
 
-**Metric:** Of all candidates in a batch, what % had `existing_code_match` set (coder tried to reuse) vs null (coder proposed new)? Cross-tab with comparator decision: of those the coder flagged as matches, how many did the comparator confirm as MERGE vs flip to NEW? Of those the coder said were new (null), how many did the comparator flip to MERGE?
+**Metric:** 2×2 matrix — coder flagged existing match (bypass comparator) vs coder said new × comparator decision (NEW / MERGE / REJECT). Reveals (a) whether codebook injection is working — a well-calibrated coder should flag more matches as the codebook grows; (b) coder–comparator agreement — systematic flip rate signals prompt misalignment.
 
-This 2×2 matrix reveals: (a) whether the codebook injection is working — a well-calibrated coder should flag more matches as the codebook grows; (b) whether coder and comparator agree on boundaries — systematic disagreement signals prompt misalignment between the two agents.
-
-**Implementation:** Collect `existing_code_match` is-not-null counts in `orchestrator.py` during batch processing. Add to `triage_stats` summary. Report in Layer 3 metrics or batch log. Cross-tab against comparator decisions is already available in `grey_zone_decisions` and the merge/new counters.
-
-**Files:** `src/orchestrator.py` — batch processing loop. `src/quality_metrics.py` — new diagnostic field. `src/quality_report.py` — display.
+**Implementation:** Four counters in `orchestrator.py`: `coder_flagged_match`, `coder_new_comp_new`, `coder_new_comp_merge`, `coder_new_comp_reject`. Passed through pipeline.py kwargs to `quality_metrics.compute_all()`, stored as `coder_reuse` in results. Displayed as CODER REUSE RATE block in `quality_report.py` with flip rate warning (>40% = ⚠ coder over-generates).
 
 ### Coder Agent Confidence Metric `[resolved]`
 Metric collection in place (Layer 3 `coder_confidence` dict with mean/min/max/low_count/ratio). Low-confidence IC IDs now tracked in `layer1_summary["low_confidence_ic_ids"]` and passed to codebook sign-off, where they appear as ⚑ flags in the display with a summary warning. Threshold: confidence < 0.6.
@@ -295,10 +289,10 @@ All LLM-facing Pydantic model fields have instruction-style descriptions. Commit
 ### thematic_structure Auto-Export `[resolved]`
 `run_pipeline.py` auto-writes `{db_stem}_thematic_structure.json` at end of each run.
 
-### Coder Agent Batch Fallback — Targeted Retry `[ready]`
-**Problem:** When the coder's batch response fails Pydantic validation (malformed JSON, missing required fields), the current fallback re-runs every segment in the batch individually. If 1 of 8 segments caused the failure, we're doing 7 unnecessary solo LLM calls.
+### Coder Agent Batch Fallback — Targeted Retry `[resolved]`
+**Problem:** When a batch LLM call succeeds structurally but some segments are simply absent from the response (the LLM dropped them silently), the previous code only logged a warning and moved on — those segments got zero candidates extracted.
 
-**Fix:** Parse the `ValidationError` to identify which segment IDs failed. Retry only those in singular mode via tenacity exponential backoff. Segments that passed validation are kept. This is more efficient and uses tenacity as designed — targeted retry on the actual failure point, not a full batch reset. Requires reading the current fallback logic in `coder_agent.py` carefully before implementing.
+**Fix:** After batch result processing, compute `responded_ids = {sr.segment_id for sr in result.segment_results}`. For each segment missing from that set, call `_code_segment()` individually (uses the existing 3-attempt tenacity retry). Segments that were present in the batch result are unaffected. If the targeted retry finds candidates it logs "recovered N candidates"; if not it logs a warning. This is surgically targeted — only the truly missing segments are retried.
 
 ### Segment Faithfulness Scoring `[design]`
 **Problem:** The pipeline drops candidates at span validation, but we don't know whether the coder agent is systematically hallucinating spans for certain types of text. A per-segment faithfulness score (verified_quotes / total_candidates) would reveal: (a) segments that consistently cause span errors, (b) whether certain text patterns (long sentences, slang, mixed language) cause more hallucination.
@@ -384,4 +378,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-03-01 — Added: Reasoning Model Support section with two parked items (retry effort escalation, production log mode). Reasoning infrastructure implemented: ReasoningLogger, extract_reasoning(), build_extra_body(), create_with_completion() across all agents. Remaining ready: Coder Agent Batch Fallback targeted retry, Production Reasoning Log Mode. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*
+*Last updated: 2026-03-01 — Implemented three coder diagnostics: (1) Confidence redefined as novelty signal in prompts.py + models.py; (2) Coder reuse rate 2×2 matrix added to orchestrator.py, quality_metrics.py, quality_report.py; (3) Targeted retry for batch-missing segments in coder_agent.py. Remaining ready: Production Reasoning Log Mode. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*

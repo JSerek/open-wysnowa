@@ -282,6 +282,14 @@ class QualityMetricsEngine:
         coder_confidence = self.compute_coder_confidence(new_ic_confidences)
         results["coder_confidence"] = coder_confidence
 
+        # Coder Reuse Rate (2×2 matrix: coder flagged vs comparator outcome)
+        results["coder_reuse"] = {
+            "flagged_match": kwargs.get("coder_flagged_match", 0),
+            "new_comp_new": kwargs.get("coder_new_comp_new", 0),
+            "new_comp_merge": kwargs.get("coder_new_comp_merge", 0),
+            "new_comp_reject": kwargs.get("coder_new_comp_reject", 0),
+        }
+
         logger.info("All quality metrics computed (18 metrics)")
         return results
 
