@@ -197,6 +197,39 @@ Several metric pairs are structurally linked and must be read together, never in
 ### canonical_30 as permanent benchmark
 All leaderboard runs against canonical_30 only. It's fixed, validated, and small enough to run cheaply. Never swap the benchmark dataset mid-leaderboard — that invalidates all historical rows.
 
+---
+
+## Category Agent Quality Gates `[design]`
+
+### Current state
+Category Agent pipeline: LLM proposal → programmatic centroid merge (overlapping categories) + singleton absorption → HIL sign-off → persist. Compared to the Theme layer, it lacks any post-proposal quality gate.
+
+### What the Theme layer has that Category doesn't
+- Coherence gate with dissolve option
+- Distinctness revision pass (LLM merge/sharpen)
+- Magnet theme detection + k-means split
+- Orphan reassessment pass
+- Live coherence + distinctness display in HIL loop
+
+### Why the gap is acceptable for now
+Categories are coarser by design — grouping 6 themes into 3 buckets is a well-constrained problem where IC-level coherence measurement doesn't directly apply. At current scale (3–8 categories), the risks are limited and the HIL sign-off provides sufficient manual oversight.
+
+### What's worth adding eventually
+
+**Category-level distinctness check:** Same risk of "magnet category" exists — one bucket catches everything, others are thin. A pairwise centroid similarity check (reusing existing `_merge_overlapping` logic) could flag categories above threshold before the HIL display. At category scale this is simpler than at theme scale because there are fewer pairs.
+
+**Coverage review in HIL display:** Show which themes landed in which category, flag any category with only 1 theme (de facto singleton — equivalent of a thin theme). Currently the analyst sees category names and definitions but not the theme distribution at a glance.
+
+**Sentiment purity gate at category level:** Layer 3 already computes per-theme sentiment purity. A mixed-sentiment category (e.g., one containing both "positive franchise comparisons" and "negative pricing" themes) is a signal worth surfacing — the category boundary may be wrong. Would reuse the same purity metric, just aggregated per category.
+
+### What's NOT worth adding
+Full coherence gate at category level — categories are intentionally broad, and measuring coherence across 2–3 themes is statistically weak. The distinctness and coverage checks above give enough signal without adding the full gate machinery.
+
+### Prerequisites
+Stable theme pipeline first. Category gates only make sense once the themes going into them are consistently well-formed.
+
+---
+
 ## Next Up
 
 ### Coder Agent Confidence Metric `[resolved]`
