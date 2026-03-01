@@ -5,6 +5,30 @@
 
 ---
 
+## Active Model Configuration
+
+**Before running any test, confirm which agent block is active in `eqd_config.yaml`.**
+
+The `agents:` section has three commented/uncommented variants. Only one should be active at a time:
+
+| Block | Coder | Comparator | Synthesizer | When to use |
+|-------|-------|------------|-------------|-------------|
+| **Gemini (active)** | gemini_flash_lite | gemini_flash_lite | claude-sonnet-4-5 | Default; cheapest; weakest structured output |
+| **OpenRouter** | or_fast | or_fast | or_smart | Requires `OPENROUTER_API_KEY` in `.env`; **verify model IDs first** |
+| **Anthropic Haiku** | haiku / haiku35 | haiku | sonnet | Reliable structured output; more expensive |
+
+**To switch to a different block:**
+1. Comment out the active `agents:` block in `eqd_config.yaml`
+2. Uncomment the desired block
+3. If switching to OpenRouter: verify `or_fast` / `or_smart` model IDs at https://openrouter.ai/models — the IDs in the YAML (`openai/gpt-5-nano`, `google/gemini-3-flash-preview`) are **unverified placeholders** and may not exist. Fix them before use.
+4. If switching to OpenRouter: confirm `OPENROUTER_API_KEY` is set in `.env`
+
+**To check which config is active during a run:** look at the first log lines — the `[CODER]` and `[TRIAGE]` lines will show model responses. OpenRouter requests appear in your OpenRouter dashboard; Google requests appear in Google AI Studio usage.
+
+**Current recommendation for stabilization testing:** Switch to `gemini_flash` (non-lite) or Anthropic Haiku before running Phase 1.2+ runs. Gemini Flash Lite has shown structured output failures on the batch coder prompt (numeric ID leakage, unescaped IC names with spaces).
+
+---
+
 ## Canonical Test Dataset
 
 **IMPORTANT:** All stabilization runs use the same canonical dataset — the top 100 most-upvoted negative reviews from `dying_light_beast_negative_full.csv`, sorted by `votes_up` descending. Subsets are nested: 30 ⊂ 50 ⊂ 100 (the first 30 are always the same 30).
@@ -30,12 +54,25 @@ Establish that the pipeline runs clean at different scales before testing intera
   --no-hil --db runs/canon_30.db --save-results runs/results_canon_30.json
 ```
 **Check:**
-- [ ] Pipeline completes without errors
-- [ ] S4 features fire: look for `[DISTINCT]` and `[SPLIT]` log lines
-- [ ] Layer 4 produces an analytical brief (results["layer4"] is not null)
+- [x] Pipeline completes without errors ← **PARTIAL** — ran 2026-03-01, crashed in Layer 3 (see run log below)
+- [x] S4 features fire: look for `[DISTINCT]` and `[SPLIT]` log lines ← ✅ fired correctly
+- [ ] Layer 4 produces an analytical brief (results["layer4"] is not null) ← not reached (Layer 3 crash)
 - [ ] Layer 4 brief prints to terminal (even in no-HIL mode)
-- [ ] All 17 metrics computed (check Layer 3 output)
+- [ ] All 18 metrics computed (check Layer 3 output) ← not reached
 - [ ] Thematic structure has categories → themes → ICs → quotes hierarchy
+
+**Run log — 2026-03-01 (model: gemini_flash_lite via Google direct):**
+- Layer 0: 30 docs → 30 segments ✅
+- Layer 1: 217 ICs, 43 auto-merges, 2/295 candidates dropped (0.7%). 38 ICs refined. ✅
+- Layer 1 anomalies:
+  - Batch 3 sub-batch 5: coder sent `existing_code_match` as float ordinals (33.0, 46.0…) instead of IC ID strings — all skipped gracefully. **Model structured output failure.**
+  - 3 ICs created with spaces in name instead of underscores — caused theme→IC assignment miss and orphan. **Model structured output failure.**
+- Layer 2: 24 themes in 1 round. S4 distinctness revision fired (10 pairs → all sharpened). S4 splitting fired: 4 themes split → 28 themes. ✅
+- Coherence gate: baseline 0.326, 0 themes flagged. ✅
+- Orphan pass: 26 orphans (12%), 18 assigned, 7 isolated, 3 new thin themes. ✅
+- Category synthesis: 8 categories. ✅
+- **Layer 3 crash:** `AttributeError: 'QualityMetricsEngine' object has no attribute '_persist_metric'` in `compute_coder_confidence()`. **Fixed in commit 00dbe2c — remove the erroneous call.**
+- Re-run after fix: pending.
 
 ### 1.2 Medium run — 50 reviews
 ```bash
@@ -235,10 +272,14 @@ Issues identified from the random-sample STAB_30/50/100 runs (pre-canonical data
 |---|------|-------|----------|--------|
 | 1 | Layer 2 | Refinement too passive — 0 dissolutions, near-zero merges despite 22-38 overlapping pairs | High | To fix |
 | 2 | Layer 1 | Low convergence confidence (39-45%) — codebook not stabilizing, excessive new IC creation | High | To fix |
-| 3 | Layer 2 | Coherence degrades with scale (0.61→0.50) — no coherence-guided splitting exists | Medium | To fix |
+| 3 | Layer 2 | Coherence degrades with scale (0.61→0.50) — no coherence-guided splitting exists | Medium | Fixed — S4 split heuristic implemented |
 | 4 | Coverage | 17% unassigned ICs at 100 segments — mix of threshold issues and missing themes | Medium | To investigate |
 | 5 | Layer 1 | IC reuse prompt too weak — coder creates duplicates that merge step cleans up | Medium | To fix |
-| 6 | Model | Gemini 2.5 Flash Lite may be too weak for coding — switch to Flash (non-lite) | Medium | To test |
+| 6 | Model | Gemini Flash Lite too weak for batch coder prompt | Medium | **Confirmed** — canon_30 run showed float-ordinal ID leakage and spaces in IC names. Switch to gemini_flash or Haiku before further runs. |
+| 7 | Layer 3 | `compute_coder_confidence()` called non-existent `_persist_metric()` method | High | **Fixed** — commit 00dbe2c (2026-03-01) |
+| 8 | Layer 1 | Coder sends `existing_code_match` as float ordinal (e.g. 33.0) instead of IC ID string — all skipped silently | Medium | To fix — add ID format validation / normalization in orchestrator |
+| 9 | Layer 1 | Coder creates IC names with spaces instead of underscores — causes theme assignment miss | Low | To fix — add `name.strip().replace(" ", "_")` normalization on IC creation |
+| 10 | Layer 1 | 82.5% singleton ratio in canon_30 — coder over-splits concepts across reviews | High | To investigate — likely model + prompt issue; expect to improve with stronger model |
 
 ---
 
@@ -256,4 +297,5 @@ The stabilization phase is complete when:
 
 *Created: 2026-02-23*
 *Updated: 2026-02-25 — canonical dataset, known issues table, model comparison phase*
+*Updated: 2026-03-01 — added Model Configuration section; added canon_30 run log (partial — Layer 3 crash fixed); updated Known Issues with issues #7–10 from canon_30 analysis*
 *Use after: Layer 4 implementation complete*
