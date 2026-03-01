@@ -96,75 +96,74 @@ models:
 # Active config: uncomment one block, comment the others.
 # Embeddings always stay on OpenAI (OpenRouter has no embedding API).
 
-# ── CURRENT: Google direct ──────────────────────────────────────
-agents:
-  coder_agent:
-    model: gemini_flash_lite      # non-thinking Gemini; uses JSON mode (see google provider)
-    temperature: 0.2
-    max_tokens: 4000
-    # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
-
-  codebook_comparator:
-    model: gemini_flash_lite
-    temperature: 0.1
-    max_tokens: 2000
-    # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
-
-  synthesizer_agent:
-    model: claude_sonnet
-    temperature: 0.2
-    max_tokens: 16000  # extended output beta required for Claude (sent automatically)
-
-  category_agent:
-    model: claude_sonnet
-    temperature: 0.2
-    max_tokens: 16000  # extended output beta required for Claude (sent automatically)
-
-  analyst_agent:
-    model: claude_sonnet
-    temperature: 0.3
-    max_tokens: 16000
-
-  embedding:
-    model: embed_openai
-
-# ── OPENROUTER config (swap to activate) ────────────────────────
-# To switch: comment the block above, uncomment this block.
-# Update or_fast / or_smart model_ids above after verifying on openrouter.ai/models
-#
+# ── GOOGLE direct (swap back to activate) ───────────────────────
 # agents:
 #   coder_agent:
-#     model: or_fast        # openai/gpt-5-nano — reasoning model
+#     model: gemini_flash_lite      # non-thinking Gemini; uses JSON mode (see google provider)
 #     temperature: 0.2
-#     max_tokens: 16000
-#     reasoning_effort: low  # mechanical extraction task — low effort saves tokens
+#     max_tokens: 4000
+#     # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
 #
 #   codebook_comparator:
-#     model: or_fast
+#     model: gemini_flash_lite
 #     temperature: 0.1
-#     max_tokens: 8000
-#     reasoning_effort: low  # merge/new decision — mechanical, low effort appropriate
+#     max_tokens: 2000
+#     # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
 #
 #   synthesizer_agent:
-#     model: or_smart       # google/gemini-3-flash-preview — reasoning model
+#     model: claude_sonnet
 #     temperature: 0.2
-#     max_tokens: 32000
-#     # reasoning_effort omitted: interpretive task benefits from model default
+#     max_tokens: 16000  # extended output beta required for Claude (sent automatically)
 #
 #   category_agent:
-#     model: or_smart
+#     model: claude_sonnet
 #     temperature: 0.2
-#     max_tokens: 32000
-#     # reasoning_effort omitted: interpretive task
+#     max_tokens: 16000  # extended output beta required for Claude (sent automatically)
 #
 #   analyst_agent:
-#     model: or_smart
+#     model: claude_sonnet
 #     temperature: 0.3
-#     max_tokens: 32000
-#     # reasoning_effort omitted: interpretive task
+#     max_tokens: 16000
 #
 #   embedding:
-#     model: embed_openai   # stays on OpenAI — OpenRouter has no embedding API
+#     model: embed_openai
+
+# ── CURRENT: OpenRouter ──────────────────────────────────────────
+# To switch back: comment this block, uncomment Google direct above.
+# Update or_fast / or_smart model_ids above after verifying on openrouter.ai/models
+agents:
+  coder_agent:
+    model: or_fast        # openai/gpt-5-nano — reasoning model
+    temperature: 0.2
+    max_tokens: 16000
+    reasoning_effort: low  # mechanical extraction task — low effort saves tokens
+
+  codebook_comparator:
+    model: or_fast
+    temperature: 0.1
+    max_tokens: 8000
+    reasoning_effort: low  # merge/new decision — mechanical, low effort appropriate
+
+  synthesizer_agent:
+    model: or_smart       # google/gemini-3-flash-preview — reasoning model
+    temperature: 0.2
+    max_tokens: 32000
+    # reasoning_effort omitted: interpretive task benefits from model default
+
+  category_agent:
+    model: or_smart
+    temperature: 0.2
+    max_tokens: 32000
+    # reasoning_effort omitted: interpretive task
+
+  analyst_agent:
+    model: or_smart
+    temperature: 0.3
+    max_tokens: 32000
+    # reasoning_effort omitted: interpretive task
+
+  embedding:
+    model: embed_openai   # stays on OpenAI — OpenRouter has no embedding API
 
 # ── STUDY ─────────────────────────────────────────────────────────
 study:
