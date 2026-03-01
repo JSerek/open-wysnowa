@@ -80,15 +80,17 @@ models:
     model_id: text-embedding-3-small
 
   # ── OpenRouter models ─────────────────────────────────────────────
-  # NOTE: verify exact model IDs at https://openrouter.ai/models
-  # The IDs below are placeholders — update with exact strings before use.
   or_fast:
     provider: openrouter
     model_id: openai/gpt-5-nano
+    reasoning: true               # gpt-5-nano is a reasoning model (uses reasoning tokens)
+    reasoning_style: openai       # → extra_body: {"reasoning_effort": "low"|...}
 
   or_smart:
     provider: openrouter
     model_id: google/gemini-3-flash-preview
+    reasoning: true               # Gemini Flash has baked-in thinking; controlled via OpenRouter
+    reasoning_style: openai       # OpenRouter normalises to openai-style extra_body params
 
 # ── AGENTS ────────────────────────────────────────────────────────
 # Active config: uncomment one block, comment the others.
@@ -100,11 +102,13 @@ agents:
     model: gemini_flash_lite      # non-thinking Gemini; uses JSON mode (see google provider)
     temperature: 0.2
     max_tokens: 4000
+    # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
 
   codebook_comparator:
     model: gemini_flash_lite
     temperature: 0.1
     max_tokens: 2000
+    # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
 
   synthesizer_agent:
     model: claude_sonnet
@@ -130,29 +134,34 @@ agents:
 #
 # agents:
 #   coder_agent:
-#     model: or_fast        # user target: openai/gpt-5-nano — verify ID
+#     model: or_fast        # openai/gpt-5-nano — reasoning model
 #     temperature: 0.2
-#     max_tokens: 16000     # gpt-4o-mini caps at 16k; gpt-5-nano may differ
+#     max_tokens: 16000
+#     reasoning_effort: low  # mechanical extraction task — low effort saves tokens
 #
 #   codebook_comparator:
 #     model: or_fast
 #     temperature: 0.1
 #     max_tokens: 8000
+#     reasoning_effort: low  # merge/new decision — mechanical, low effort appropriate
 #
 #   synthesizer_agent:
-#     model: or_smart       # user target: google/gemini-3-flash-preview — verify ID
+#     model: or_smart       # google/gemini-3-flash-preview — reasoning model
 #     temperature: 0.2
-#     max_tokens: 32000     # Gemini Flash supports 65k output; 32k safe headroom for reasoning
+#     max_tokens: 32000
+#     # reasoning_effort omitted: interpretive task benefits from model default
 #
 #   category_agent:
 #     model: or_smart
 #     temperature: 0.2
 #     max_tokens: 32000
+#     # reasoning_effort omitted: interpretive task
 #
 #   analyst_agent:
 #     model: or_smart
 #     temperature: 0.3
 #     max_tokens: 32000
+#     # reasoning_effort omitted: interpretive task
 #
 #   embedding:
 #     model: embed_openai   # stays on OpenAI — OpenRouter has no embedding API

@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.coder_agent import CoderAgent
 from src.codebook_comparator import CodebookComparator
 from src.config import EQDConfig, ModelClient
+from src.reasoning_log import ReasoningLogger
 from src.db import (
     Database,
     DecisionLogRepo,
@@ -203,16 +204,23 @@ class Layer1Orchestrator:
     segments → coder agent → comparator → HIL → persistence → ITS tracking
     """
 
-    def __init__(self, model_client: ModelClient, db: Database, config: EQDConfig):
+    def __init__(
+        self,
+        model_client: ModelClient,
+        db: Database,
+        config: EQDConfig,
+        reasoning_logger: Optional["ReasoningLogger"] = None,
+    ):
         self.model_client = model_client
         self.db = db
         self.config = config
+        self.reasoning_logger = reasoning_logger
 
         # Sub-components
-        self.coder_agent = CoderAgent(model_client, db, config)
+        self.coder_agent = CoderAgent(model_client, db, config, reasoning_logger)
         self.embedding_service = EmbeddingService(model_client, db)
         self.comparator = CodebookComparator(
-            model_client, self.embedding_service, db, config,
+            model_client, self.embedding_service, db, config, reasoning_logger,
         )
 
         # ITS tracking
@@ -876,16 +884,20 @@ class Layer1Orchestrator:
                 # Capture pre-refinement embedding for stability measurement
                 old_embedding = ic.embedding_json
 
-                result = client.chat.completions.create(
+                extra_body = self.model_client.build_extra_body(agent_name)
+                refined_parsed, refined_raw = client.chat.completions.create_with_completion(
                     model=model_id,
                     response_model=RefinedICOutput,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
                     max_tokens=800,
+                    **({"extra_body": extra_body} if extra_body else {}),
                 )
+                if self.reasoning_logger:
+                    self.reasoning_logger.log("ic_refinement", model_id, refined_raw)
 
                 old_def = ic.definition
-                ic.definition = result.refined_definition
+                ic.definition = refined_parsed.refined_definition
 
                 # Re-embed with updated definition
                 ic = self.embedding_service.embed_ic(ic)

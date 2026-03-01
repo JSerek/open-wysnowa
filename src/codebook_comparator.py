@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
+from src.reasoning_log import ReasoningLogger
 from src.db import Database, InitialCodeRepo
 from src.embeddings import EmbeddingService, SimilarityResult
 from src.models import (
@@ -49,12 +50,14 @@ class CodebookComparator:
         embedding_service: EmbeddingService,
         db: Database,
         config: EQDConfig,
+        reasoning_logger: Optional["ReasoningLogger"] = None,
     ):
         self.model_client = model_client
         self.embedding_service = embedding_service
         self.db = db
         self.config = config
         self.top_k = config.processing.similarity_prefilter_k
+        self.reasoning_logger = reasoning_logger
 
     def evaluate(
         self,
@@ -214,8 +217,11 @@ class CodebookComparator:
         temperature: float,
         max_tokens: int,
     ) -> ComparatorOutput:
-        """Instructor-patched LLM call with retry."""
-        return client.chat.completions.create(
+        """Instructor-patched LLM call with retry.
+        Uses create_with_completion() to capture reasoning traces when available.
+        """
+        extra_body = self.model_client.build_extra_body("codebook_comparator")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=ComparatorOutput,
             messages=[
@@ -224,4 +230,8 @@ class CodebookComparator:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("codebook_comparator", model_id, raw)
+        return parsed

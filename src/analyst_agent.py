@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
+from src.reasoning_log import ReasoningLogger
 from src.models import (
     AnalyticalBrief,
     AnalystSynthesis,
@@ -49,9 +50,15 @@ class AnalystAgent:
       - AnalystSynthesis (overall recommendations)
     """
 
-    def __init__(self, model_client: ModelClient, config: EQDConfig):
+    def __init__(
+        self,
+        model_client: ModelClient,
+        config: EQDConfig,
+        reasoning_logger: Optional["ReasoningLogger"] = None,
+    ):
         self.model_client = model_client
         self.config = config
+        self.reasoning_logger = reasoning_logger
 
     def analyze(self, results: Dict[str, Any]) -> AnalyticalBrief:
         """
@@ -225,7 +232,8 @@ class AnalystAgent:
         max_tokens: int,
     ) -> MetricsInterpretation:
         """Instructor-patched LLM call for metrics interpretation."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("analyst_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=MetricsInterpretation,
             messages=[
@@ -234,7 +242,11 @@ class AnalystAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("analyst_agent", model_id, raw)
+        return parsed
 
     @retry(
         stop=stop_after_attempt(2),
@@ -251,7 +263,8 @@ class AnalystAgent:
         max_tokens: int,
     ) -> StructuralDiagnostics:
         """Instructor-patched LLM call for structural diagnostics."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("analyst_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=StructuralDiagnostics,
             messages=[
@@ -260,7 +273,11 @@ class AnalystAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("analyst_agent", model_id, raw)
+        return parsed
 
     @retry(
         stop=stop_after_attempt(2),
@@ -277,7 +294,8 @@ class AnalystAgent:
         max_tokens: int,
     ) -> AnalystSynthesis:
         """Instructor-patched LLM call for synthesis & recommendations."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("analyst_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=AnalystSynthesis,
             messages=[
@@ -286,4 +304,8 @@ class AnalystAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("analyst_agent", model_id, raw)
+        return parsed

@@ -28,12 +28,19 @@ class ProviderConfig(BaseModel):
 class NamedModel(BaseModel):
     provider: str
     model_id: str
+    # Reasoning model support — omit for non-reasoning models (treated as False)
+    reasoning: bool = False
+    reasoning_style: Optional[str] = None  # "openai" | "gemini" | "deepseek" | "anthropic"
 
 
 class AgentParams(BaseModel):
     model: str  # reference to named model
     temperature: float = 0.3
     max_tokens: int = 4000
+    # Declarative reasoning effort: "off" | "low" | "medium" | "high"
+    # Omit to use model default. Only applied when the model has reasoning: true.
+    # "off" maps to "low" for openai style (no true off exists on those models).
+    reasoning_effort: Optional[str] = None
 
 
 class StudyConfig(BaseModel):
@@ -279,6 +286,52 @@ class ModelClient:
                 )
 
         return self._clients[cache_key], model_cfg.model_id
+
+    def build_extra_body(self, agent_name: str) -> dict:
+        """
+        Return provider-specific extra_body params for reasoning effort control.
+
+        Returns an empty dict if:
+          - the agent's model has no reasoning (reasoning: false / omitted)
+          - no reasoning_effort is configured for the agent
+          - the reasoning_style is not recognised
+
+        Translation table:
+          openai style  → {"reasoning_effort": "low"|"medium"|"high"}
+                          ("off" maps to "low" — OpenAI has no true off)
+          gemini style  → {"generationConfig": {"thinkingConfig": {"thinkingBudget": N}}}
+                          N: off=0, low=512, medium=4096, high=8192
+          deepseek style → no effort control param supported yet; returns {}
+          anthropic style → not handled here (thinking requires message-level param); returns {}
+
+        New reasoning_style values can be added to _EFFORT_TRANSLATORS below.
+        """
+        agent_cfg = self.config.agents.get(agent_name)
+        if not agent_cfg or not agent_cfg.reasoning_effort:
+            return {}
+
+        model_cfg = self.config.models.get(agent_cfg.model)
+        if not model_cfg or not model_cfg.reasoning:
+            return {}
+
+        effort = agent_cfg.reasoning_effort.lower()
+        style = (model_cfg.reasoning_style or "").lower()
+
+        _OPENAI_EFFORT = {"off": "low", "low": "low", "medium": "medium", "high": "high"}
+        _GEMINI_BUDGET = {"off": 0, "low": 512, "medium": 4096, "high": 8192}
+
+        if style == "openai":
+            mapped = _OPENAI_EFFORT.get(effort)
+            return {"reasoning_effort": mapped} if mapped else {}
+
+        elif style == "gemini":
+            budget = _GEMINI_BUDGET.get(effort)
+            if budget is not None:
+                return {"generationConfig": {"thinkingConfig": {"thinkingBudget": budget}}}
+            return {}
+
+        # deepseek / anthropic / unknown: no effort param yet
+        return {}
 
     def _get_or_create_client(self, provider_name: str, provider: ProviderConfig) -> Any:
         """Lazy-init and cache instructor-patched clients."""

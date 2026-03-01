@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
+from src.reasoning_log import ReasoningLogger
 from src.db import Database, InitialCodeRepo
 from src.models import BatchCodingResult, ICCandidate, InitialCode, Segment, SegmentCodingResult
 from src.prompts import (
@@ -45,10 +46,17 @@ class CoderAgent:
     the next batch's codebook.
     """
 
-    def __init__(self, model_client: ModelClient, db: Database, config: EQDConfig):
+    def __init__(
+        self,
+        model_client: ModelClient,
+        db: Database,
+        config: EQDConfig,
+        reasoning_logger: Optional["ReasoningLogger"] = None,
+    ):
         self.model_client = model_client
         self.db = db
         self.config = config
+        self.reasoning_logger = reasoning_logger
         # Per-segment drop counts from the most recent process_batch() call.
         # Keyed by segment_id; value = number of candidates dropped due to span validation failure.
         self.last_drop_counts: Dict[str, int] = {}
@@ -255,8 +263,10 @@ class CoderAgent:
         Instructor-patched LLM call — single segment mode.
 
         Returns SegmentCodingResult (validated by Pydantic).
+        Uses create_with_completion() to capture reasoning traces when available.
         """
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("coder_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=SegmentCodingResult,
             messages=[
@@ -265,7 +275,11 @@ class CoderAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("coder_agent", model_id, raw)
+        return parsed
 
     @retry(
         stop=stop_after_attempt(3),
@@ -285,8 +299,10 @@ class CoderAgent:
         Instructor-patched LLM call — multi-segment batch mode.
 
         Returns BatchCodingResult (validated by Pydantic).
+        Uses create_with_completion() to capture reasoning traces when available.
         """
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("coder_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=BatchCodingResult,
             messages=[
@@ -295,7 +311,11 @@ class CoderAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("coder_agent", model_id, raw)
+        return parsed
 
     @staticmethod
     def _validate_span(candidate: ICCandidate, segment: Segment) -> bool:

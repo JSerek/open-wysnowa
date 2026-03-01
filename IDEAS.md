@@ -213,6 +213,16 @@ All LLM-facing Pydantic model fields have instruction-style descriptions. Commit
 
 ---
 
+## Reasoning Model Support — Parked Items
+
+### Retry Effort Escalation `[later]`
+When instructor retries a failed structured output call, the reasoning budget is consumed again at the same effort level. A smarter approach: start at `low` on first attempt, escalate to `medium` on retry 1, `high` on retry 2. This means cheap attempts for the common case, and heavier reasoning only for genuinely ambiguous outputs. Requires hooking into instructor's retry callback to modify `extra_body` between attempts. Park until reasoning models are the primary coder/comparator model and retry cost is measurable.
+
+### Production Reasoning Log Mode `[ready]`
+The `ReasoningLogger` already supports `mode="failures_only"` — switch it in `pipeline.py` before go-live. In production, logging every call (especially for non-reasoning models that log zeros) is low-value noise. Failures-only mode retains traces for debugging without per-call overhead. Implement as a `reasoning_log_mode` field in `eqd_config.yaml` (`full` / `failures_only`, default `full`), read in `pipeline.py` when constructing `ReasoningLogger`.
+
+---
+
 ## Other Ideas (Parking Lot)
 
 ### Knowledge Graph / Quote Network Visualization `[later]`
@@ -275,4 +285,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-02-28 — Archived resolved items: SUBCODE Deprecation, Category HIL Sign-Off, Resume-from-Codebook, Exhaustive Field descriptions, Category Merge Threshold Tuning, Category Merge LLM Rename, thematic_structure Auto-Export, Coder Agent Confidence Metric (⚑ flag at sign-off, low_confidence_ic_ids tracked in layer1_summary). Four workflow skills committed to skills/ (eqa-decision-protocol, eqa-ideas-maintenance, eqa-arch-review, eqa-repo-standards). Remaining ready: Coder Agent Batch Fallback targeted retry. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*
+*Last updated: 2026-03-01 — Added: Reasoning Model Support section with two parked items (retry effort escalation, production log mode). Reasoning infrastructure implemented: ReasoningLogger, extract_reasoning(), build_extra_body(), create_with_completion() across all agents. Remaining ready: Coder Agent Batch Fallback targeted retry, Production Reasoning Log Mode. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*

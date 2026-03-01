@@ -14,6 +14,7 @@ Entry point: EQDPipeline.run(documents)
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,7 @@ from src.orchestrator import Layer1Orchestrator
 from src.preprocessing import preprocess_documents
 from src.quality_metrics import QualityMetricsEngine
 from src.quality_report import display_analytical_brief, display_codebook_report, display_final_report, display_theme_report
+from src.reasoning_log import ReasoningLogger
 from src.synthesizer_agent import SynthesizerAgent
 from src.theme_hil import (
     collect_all_feedback,
@@ -61,17 +63,37 @@ class EQDPipeline:
         self.db = Database(db_path)
         self.db.init_schema()
 
+        # Generate run_id: study_name + UTC timestamp (filesystem-safe)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        self.run_id = f"{self.config.study.name}_{ts}"
+
+        # Init reasoning logger (full mode during development/testing)
+        log_dir = Path(db_path).parent / "runs"
+        self.reasoning_logger = ReasoningLogger(
+            run_id=self.run_id,
+            log_dir=log_dir,
+            mode="full",
+        )
+
         # Init shared services
         self.model_client = ModelClient(self.config)
         self.embedding_service = EmbeddingService(self.model_client, self.db)
 
-        # Init layer components
-        self.layer1 = Layer1Orchestrator(self.model_client, self.db, self.config)
+        # Init layer components — all agents receive the reasoning logger
+        self.layer1 = Layer1Orchestrator(
+            self.model_client, self.db, self.config, self.reasoning_logger,
+        )
         self.signoff = CodebookSignoff(self.db, self.embedding_service)
-        self.synthesizer = SynthesizerAgent(self.model_client, self.db, self.config)
+        self.synthesizer = SynthesizerAgent(
+            self.model_client, self.db, self.config, self.reasoning_logger,
+        )
         self.quality_engine = QualityMetricsEngine(self.db, self.embedding_service)
-        self.category_agent = CategoryAgent(self.model_client, self.db, self.config)
-        self.analyst = AnalystAgent(self.model_client, self.config)
+        self.category_agent = CategoryAgent(
+            self.model_client, self.db, self.config, self.reasoning_logger,
+        )
+        self.analyst = AnalystAgent(
+            self.model_client, self.config, self.reasoning_logger,
+        )
 
     def run(
         self,

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
+from src.reasoning_log import ReasoningLogger
 from src.db import Database, InitialCodeRepo, ThemeRepo, VerbatimQuoteRepo
 from src.models import (
     DistinctnessRevisionOutput,
@@ -56,10 +57,17 @@ class SynthesizerAgent:
     handles persistence after final sign-off.
     """
 
-    def __init__(self, model_client: ModelClient, db: Database, config: EQDConfig):
+    def __init__(
+        self,
+        model_client: ModelClient,
+        db: Database,
+        config: EQDConfig,
+        reasoning_logger: Optional["ReasoningLogger"] = None,
+    ):
         self.model_client = model_client
         self.db = db
         self.config = config
+        self.reasoning_logger = reasoning_logger
 
     def synthesize(self) -> List[ThemeProposal]:
         """
@@ -236,7 +244,8 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> SynthesisOutput:
         """Instructor-patched LLM call for initial synthesis."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("synthesizer_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=SynthesisOutput,
             messages=[
@@ -245,7 +254,11 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("synthesizer_agent", model_id, raw)
+        return parsed
 
     @retry(
         stop=stop_after_attempt(2),
@@ -262,7 +275,8 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> RevisionOutput:
         """Instructor-patched LLM call for theme revision."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("synthesizer_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=RevisionOutput,
             messages=[
@@ -271,7 +285,11 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("synthesizer_agent", model_id, raw)
+        return parsed
 
     # ── Distinctness Revision ─────────────────────────────────────────────
 
@@ -332,7 +350,8 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> DistinctnessRevisionOutput:
         """Instructor-patched LLM call for distinctness revision."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("synthesizer_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=DistinctnessRevisionOutput,
             messages=[
@@ -341,7 +360,11 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("synthesizer_agent", model_id, raw)
+        return parsed
 
     # ── Split Validation ──────────────────────────────────────────────────
 
@@ -410,7 +433,8 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> SplitValidationOutput:
         """Instructor-patched LLM call for split validation."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("synthesizer_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=SplitValidationOutput,
             messages=[
@@ -419,7 +443,11 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("synthesizer_agent", model_id, raw)
+        return parsed
 
     # ── Orphan Reassessment ───────────────────────────────────────────────
 
@@ -489,7 +517,8 @@ class SynthesizerAgent:
         max_tokens: int,
     ) -> OrphanReassessmentOutput:
         """Instructor-patched LLM call for orphan reassessment."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("synthesizer_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=OrphanReassessmentOutput,
             messages=[
@@ -498,4 +527,8 @@ class SynthesizerAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("synthesizer_agent", model_id, raw)
+        return parsed

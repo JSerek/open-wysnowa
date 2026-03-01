@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import EQDConfig, ModelClient
+from src.reasoning_log import ReasoningLogger
 from src.db import CategoryRepo, Database, InitialCodeRepo, ThemeRepo
 from src.embeddings import cosine_similarity
 from src.models import (
@@ -60,10 +61,17 @@ class CategoryAgent:
     Pipeline: LLM proposal → programmatic validation (merge/absorb) → persist.
     """
 
-    def __init__(self, model_client: ModelClient, db: Database, config: EQDConfig):
+    def __init__(
+        self,
+        model_client: ModelClient,
+        db: Database,
+        config: EQDConfig,
+        reasoning_logger: Optional["ReasoningLogger"] = None,
+    ):
         self.model_client = model_client
         self.db = db
         self.config = config
+        self.reasoning_logger = reasoning_logger
 
     def synthesize(
         self,
@@ -449,7 +457,8 @@ class CategoryAgent:
         )
 
         try:
-            result = client.chat.completions.create(
+            extra_body = self.model_client.build_extra_body("category_agent")
+            parsed_rename, raw_rename = client.chat.completions.create_with_completion(
                 model=model_id,
                 response_model=_CategoryMergeNameOutput,
                 messages=[
@@ -458,9 +467,12 @@ class CategoryAgent:
                 ],
                 temperature=0.3,
                 max_tokens=200,
+                **({"extra_body": extra_body} if extra_body else {}),
             )
-            logger.info(f"[CAT:RENAME] '{name_a}' + '{name_b}' → '{result.name}'")
-            return result.name, result.definition
+            if self.reasoning_logger:
+                self.reasoning_logger.log("category_agent", model_id, raw_rename)
+            logger.info(f"[CAT:RENAME] '{name_a}' + '{name_b}' → '{parsed_rename.name}'")
+            return parsed_rename.name, parsed_rename.definition
         except Exception as e:
             logger.warning(
                 f"[CAT:RENAME] LLM rename failed ({e}) — using heuristic fallback"
@@ -487,7 +499,8 @@ class CategoryAgent:
         max_tokens: int,
     ) -> CategorySynthesisOutput:
         """Instructor-patched LLM call for category synthesis."""
-        return client.chat.completions.create(
+        extra_body = self.model_client.build_extra_body("category_agent")
+        parsed, raw = client.chat.completions.create_with_completion(
             model=model_id,
             response_model=CategorySynthesisOutput,
             messages=[
@@ -496,4 +509,8 @@ class CategoryAgent:
             ],
             temperature=temperature,
             max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
         )
+        if self.reasoning_logger:
+            self.reasoning_logger.log("category_agent", model_id, raw)
+        return parsed
