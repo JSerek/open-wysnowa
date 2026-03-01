@@ -110,7 +110,7 @@ class TestModelClient:
         config = load_config(CONFIG_PATH)
         mc = ModelClient(config)
         client, model_id, params = mc.get_client("coder_agent")
-        assert model_id == "gemini-2.5-flash-lite"  # switched from claude-haiku
+        assert model_id == "openai/gpt-5-nano"  # switched to OpenRouter or_fast
         assert params.temperature == 0.2
 
     @patch.dict(os.environ, {
