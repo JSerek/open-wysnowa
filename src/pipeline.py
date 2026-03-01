@@ -68,7 +68,7 @@ class EQDPipeline:
         self.run_id = f"{self.config.study.name}_{ts}"
 
         # Init reasoning logger (full mode during development/testing)
-        log_dir = Path(db_path).parent / "runs"
+        log_dir = Path(db_path).parent
         self.reasoning_logger = ReasoningLogger(
             run_id=self.run_id,
             log_dir=log_dir,

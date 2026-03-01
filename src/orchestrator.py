@@ -916,7 +916,7 @@ class Layer1Orchestrator:
                 refined_count += 1
 
                 logger.info(
-                    f"[IC:REFINE] '{ic.name}': {result.change_summary}"
+                    f"[IC:REFINE] '{ic.name}': {refined_parsed.change_summary}"
                 )
 
             except Exception as e:
