@@ -101,11 +101,14 @@ class TestCodebookComparatorWithCodes:
             SimilarityResult(ic_id="ic_003", ic_name="Packaging damage", similarity=0.45),
         ]
 
-        # Mock LLM response
-        mock_client.chat.completions.create.return_value = ComparatorOutput(
-            recommendation=ComparatorRecommendation.MERGE,
-            merge_target_name="Delivery speed complaint",
-            reasoning="Semantically equivalent — both describe slow delivery.",
+        # Mock LLM response — create_with_completion returns (parsed, raw) tuple
+        mock_client.chat.completions.create_with_completion.return_value = (
+            ComparatorOutput(
+                recommendation=ComparatorRecommendation.MERGE,
+                merge_target_name="Delivery speed complaint",
+                reasoning="Semantically equivalent — both describe slow delivery.",
+            ),
+            MagicMock(),  # raw completion — not inspected in tests
         )
 
         comparator = CodebookComparator(mc, embedding_service, db, config)
@@ -133,7 +136,7 @@ class TestCodebookComparatorWithCodes:
         ]
 
         # LLM fails
-        mock_client.chat.completions.create.side_effect = Exception("API timeout")
+        mock_client.chat.completions.create_with_completion.side_effect = Exception("API timeout")
 
         comparator = CodebookComparator(mc, embedding_service, db, config)
         output, top_k, _meta = comparator.evaluate(test_candidate)

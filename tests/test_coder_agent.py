@@ -152,7 +152,7 @@ class TestCoderAgentProcessBatch:
                 ),
             ],
         )
-        mock_client.chat.completions.create.return_value = mock_result
+        mock_client.chat.completions.create_with_completion.return_value = (mock_result, MagicMock())
 
         results = agent.process_batch([test_segment])
 
@@ -178,7 +178,7 @@ class TestCoderAgentProcessBatch:
             segment_id="seg_empty",
             candidates=[],
         )
-        mock_client.chat.completions.create.return_value = mock_result
+        mock_client.chat.completions.create_with_completion.return_value = (mock_result, MagicMock())
 
         results = agent.process_batch([empty_segment])
         assert results["seg_empty"] == []
@@ -188,7 +188,7 @@ class TestCoderAgentProcessBatch:
         config = MagicMock()
         agent = CoderAgent(mc, db, config)
 
-        mock_client.chat.completions.create.side_effect = Exception("API error")
+        mock_client.chat.completions.create_with_completion.side_effect = Exception("API error")
 
         results = agent.process_batch([test_segment])
         assert results[test_segment.id] == []
@@ -232,8 +232,8 @@ class TestCoderAgentBatchProcessing:
         good_text_b = "Jakość materiału jest znakomita"
         start_b = seg_b.canonical_text.index(good_text_b)
 
-        # Mock LLM to return BatchCodingResult
-        mock_client.chat.completions.create.return_value = BatchCodingResult(
+        # Mock LLM to return BatchCodingResult — create_with_completion returns (parsed, raw) tuple
+        mock_client.chat.completions.create_with_completion.return_value = (BatchCodingResult(
             segment_results=[
                 SegmentCodingResult(
                     segment_id="seg_a",
@@ -262,7 +262,7 @@ class TestCoderAgentBatchProcessing:
                     ],
                 ),
             ]
-        )
+        ), MagicMock())
 
         agent = CoderAgent(mc, db, config)
         results = agent.process_batch(two_segments)
@@ -276,7 +276,7 @@ class TestCoderAgentBatchProcessing:
         assert results["seg_b"][0].ic_name == "material_quality"
 
         # Only 1 LLM call should be made (batch mode)
-        assert mock_client.chat.completions.create.call_count == 1
+        assert mock_client.chat.completions.create_with_completion.call_count == 1
 
     def test_batch_with_span_validation_per_segment(self, mock_model_client, db, two_segments):
         """Span validation uses each segment's own canonical_text."""
@@ -287,7 +287,7 @@ class TestCoderAgentBatchProcessing:
         seg_a, seg_b = two_segments
 
         # Return a candidate for seg_b with text from seg_a (cross-contamination)
-        mock_client.chat.completions.create.return_value = BatchCodingResult(
+        mock_client.chat.completions.create_with_completion.return_value = (BatchCodingResult(
             segment_results=[
                 SegmentCodingResult(segment_id="seg_a", candidates=[]),
                 SegmentCodingResult(
@@ -304,7 +304,7 @@ class TestCoderAgentBatchProcessing:
                     ],
                 ),
             ]
-        )
+        ), MagicMock())
 
         agent = CoderAgent(mc, db, config)
         results = agent.process_batch(two_segments)
@@ -319,13 +319,13 @@ class TestCoderAgentBatchProcessing:
         config.processing.segments_per_coder_call = 1
 
         # Mock returns SegmentCodingResult (single mode), not BatchCodingResult
-        mock_client.chat.completions.create.return_value = SegmentCodingResult(
-            segment_id="seg_a",
-            candidates=[],
+        mock_client.chat.completions.create_with_completion.return_value = (
+            SegmentCodingResult(segment_id="seg_a", candidates=[]),
+            MagicMock(),
         )
 
         agent = CoderAgent(mc, db, config)
         results = agent.process_batch(two_segments)
 
         # 2 separate LLM calls (one per segment)
-        assert mock_client.chat.completions.create.call_count == 2
+        assert mock_client.chat.completions.create_with_completion.call_count == 2

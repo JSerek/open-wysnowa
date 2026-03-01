@@ -444,10 +444,10 @@ class TestAnalystAgent:
             confidence_note="Small sample size (30 reviews) limits generalisability of findings.",
         )
 
-        client_mock.chat.completions.create.side_effect = [
-            sample_metrics_interp,
-            sample_structural_diag,
-            synthesis,
+        client_mock.chat.completions.create_with_completion.side_effect = [
+            (sample_metrics_interp, MagicMock()),
+            (sample_structural_diag, MagicMock()),
+            (synthesis, MagicMock()),
         ]
 
         brief = agent.analyze(results)
@@ -456,7 +456,7 @@ class TestAnalystAgent:
         assert brief.metrics.assessments[0].metric_name == "grounding_rate"
         assert brief.structure.strongest_themes == ["Theme 1"]
         assert len(brief.synthesis.key_findings) >= 1
-        assert client_mock.chat.completions.create.call_count == 3
+        assert client_mock.chat.completions.create_with_completion.call_count == 3
 
     def test_analyze_call1_failure(
         self,
@@ -470,7 +470,7 @@ class TestAnalystAgent:
         results = self._build_results(sample_layer3, sample_thematic_structure)
 
         client_mock = mock_model_client.get_client.return_value[0]
-        client_mock.chat.completions.create.side_effect = Exception("LLM timeout")
+        client_mock.chat.completions.create_with_completion.side_effect = Exception("LLM timeout")
 
         with pytest.raises(Exception, match="LLM timeout"):
             agent.analyze(results)
@@ -488,13 +488,13 @@ class TestAnalystAgent:
         results = self._build_results(sample_layer3, sample_thematic_structure)
 
         client_mock = mock_model_client.get_client.return_value[0]
-        client_mock.chat.completions.create.return_value = sample_metrics_interp
+        client_mock.chat.completions.create_with_completion.return_value = (sample_metrics_interp, MagicMock())
 
         result = agent._interpret_metrics(results)
         assert isinstance(result, MetricsInterpretation)
 
         # Verify the LLM was called with system + user messages
-        call_args = client_mock.chat.completions.create.call_args
+        call_args = client_mock.chat.completions.create_with_completion.call_args
         messages = call_args.kwargs.get("messages", call_args[1].get("messages", []))
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
@@ -513,7 +513,7 @@ class TestAnalystAgent:
         results = self._build_results(sample_layer3, sample_thematic_structure)
 
         client_mock = mock_model_client.get_client.return_value[0]
-        client_mock.chat.completions.create.return_value = sample_structural_diag
+        client_mock.chat.completions.create_with_completion.return_value = (sample_structural_diag, MagicMock())
 
         result = agent._diagnose_structure(results)
         assert isinstance(result, StructuralDiagnostics)
@@ -550,7 +550,7 @@ class TestAnalystAgent:
         )
 
         client_mock = mock_model_client.get_client.return_value[0]
-        client_mock.chat.completions.create.return_value = synthesis
+        client_mock.chat.completions.create_with_completion.return_value = (synthesis, MagicMock())
 
         result = agent._synthesize(sample_metrics_interp, sample_structural_diag, results)
         assert isinstance(result, AnalystSynthesis)
