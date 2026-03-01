@@ -232,22 +232,13 @@ Stable theme pipeline first. Category gates only make sense once the themes goin
 
 ## Next Up
 
-### HIL: Quote Context — Sentence Boundaries `[ready]`
+### HIL: Quote Context — Sentence Boundaries `[resolved]`
 Replace the current fixed 50-character context window around verbatim quotes with one full sentence before and one full sentence after the extracted span. Sentence boundaries are meaningful reading units; 50 chars of raw text is not. The actual stored quote (inside `[...]`) is unchanged — only the context display changes.
 
-Edge cases: quote is the first sentence in the segment (no before), or last (no after) — display only what exists, no padding.
+Edge cases: quote is the first sentence in the segment (no before), or last (no after) — display only what exists, no padding. Implemented via `_sentence_context()` helper in `hil.py`.
 
-**Files:** `src/hil.py` — `display_candidate_review()`, replace `CONTEXT_WINDOW` logic with a sentence-boundary finder.
-
-### HIL: Merge Confirmation Prompt `[ready]`
-After the analyst selects a merge target (e.g., `M1`), add a confirmation step before accepting:
-1. Print the full name of the target IC: `→ Merging into: [1] story_filler_and_price_concern`
-2. Prompt: `Confirm? [Y/N]:`
-3. If N, return to the action prompt without recording the decision.
-
-Prevents accidental merges, especially as the codebook grows and the numbered list of similar codes gets long.
-
-**File:** `src/hil.py` — `prompt_decision()`, add confirmation loop after M-input parsing.
+### HIL: Merge Confirmation Prompt `[resolved]`
+After the analyst selects a merge target (e.g., `M1`), a confirmation step shows the full IC name and prompts Y/N before recording the decision. If N, returns to the action prompt. Prevents accidental merges as the codebook grows.
 
 ### HIL: Quote Span Editing — Bracket Slicer `[later]`
 Extend `[E]` edit mode to allow interactive span adjustment using movable `[` `]` bracket markers. Target UX: display the quote ± one sentence of context, analyst moves bracket positions using arrow keys, presses Enter to confirm. System computes `span_start`/`span_end` from final bracket positions. Works for both trimming and expanding.

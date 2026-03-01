@@ -24,7 +24,44 @@ from src.models import BatchITS, ComparatorOutput, ICCandidate
 
 SEPARATOR = "=" * 70
 THIN_SEP = "-" * 70
-CONTEXT_WINDOW = 50  # chars of context around quote
+
+
+def _sentence_context(text: str, start: int, end: int) -> tuple[str, str]:
+    """
+    Return the one sentence immediately before and after the span [start:end].
+
+    Sentence boundary detection: scan backward from `start` for the nearest
+    sentence-ending punctuation (.!?), then forward from `end` for the next one.
+    Falls back to the full remaining text if no boundary is found.
+
+    Returns (before, after) as strings, each stripped of leading/trailing
+    whitespace. Either may be empty if the span is at the very start or end.
+    """
+    # ── Before: scan left from start for previous sentence end ──────────────
+    sentence_endings = {'.', '!', '?'}
+    before = ""
+    if start > 0:
+        # Find the sentence-end punctuation just before our span
+        boundary = -1
+        for i in range(start - 1, -1, -1):
+            if text[i] in sentence_endings:
+                boundary = i
+                break
+        # The "before" sentence starts after that punctuation (or at text[0])
+        before_start = boundary + 1 if boundary >= 0 else 0
+        before = text[before_start:start].strip()
+
+    # ── After: scan right from end for next sentence end ────────────────────
+    after = ""
+    if end < len(text):
+        boundary = len(text)
+        for i in range(end, len(text)):
+            if text[i] in sentence_endings:
+                boundary = i + 1  # include the punctuation
+                break
+        after = text[end:boundary].strip()
+
+    return before, after
 
 
 # ── Display Functions ────────────────────────────────────────────────────────
@@ -64,18 +101,14 @@ def display_candidate_review(
     print(f"  Definition: {candidate.definition}")
     print(f"  Confidence: {candidate.confidence:.0%}")
 
-    # Verbatim quote with surrounding context
+    # Verbatim quote with ±1 sentence context
     start = candidate.span_start
     end = candidate.span_end
-    ctx_start = max(0, start - CONTEXT_WINDOW)
-    ctx_end = min(len(segment_text), end + CONTEXT_WINDOW)
-
-    before = segment_text[ctx_start:start]
     quote = segment_text[start:end]
-    after = segment_text[end:ctx_end]
+    before, after = _sentence_context(segment_text, start, end)
 
-    ellipsis_before = "..." if ctx_start > 0 else ""
-    ellipsis_after = "..." if ctx_end < len(segment_text) else ""
+    ellipsis_before = "..." if before else ""
+    ellipsis_after  = "..." if after else ""
 
     print(f"\n  Quote: {ellipsis_before}{before}[{quote}]{after}{ellipsis_after}")
     print(f"         span [{start}:{end}]")
@@ -164,16 +197,24 @@ def prompt_decision(
             try:
                 idx = int(raw[1:])
                 if idx in merge_targets:
-                    notes = _prompt_notes()
-                    return "M", idx, notes
+                    target_name = top_k[idx - 1].ic_name
+                    confirm = input(f"\n  → Merging into: [{idx}] {target_name}\n  Confirm? [Y/N]: ").strip().upper()
+                    if confirm in ("Y", "YES"):
+                        notes = _prompt_notes()
+                        return "M", idx, notes
+                    # else: fall back to action prompt silently
+                    continue
             except ValueError:
                 pass
             print(f"  Invalid merge target. Valid: {merge_targets}")
 
         elif raw == "M" and merge_targets:
             # Default to M1
-            notes = _prompt_notes()
-            return "M", 1, notes
+            target_name = top_k[0].ic_name
+            confirm = input(f"\n  → Merging into: [1] {target_name}\n  Confirm? [Y/N]: ").strip().upper()
+            if confirm in ("Y", "YES"):
+                notes = _prompt_notes()
+                return "M", 1, notes
 
         else:
             valid = "N, M, R, E, Q" if merge_targets else "N, R, E, Q"
