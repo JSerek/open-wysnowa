@@ -45,30 +45,20 @@ Added negative examples (BAD → diagnosis → corrected) to three agents. Coder
 
 ---
 
-## Layer 4: Analyst Intelligence `[design]`
+## Layer 4: Analyst Intelligence `[resolved]`
 
 ### Vision
 An LLM-powered interpretive layer that sits on top of the structured pipeline output. Takes the full results dict + thematic structure + quality metrics and produces a written analytical brief — the same analysis we've been doing manually in conversation.
 
-### What it would do
-- **Metric interpretation:** Read all 16+ metrics, flag anomalies, explain what they mean in context of this specific dataset/run
-- **Structural diagnostics:** Identify magnet themes, weak coherence, orphaned ICs, saturation signals, catch-all categories
-- **Thematic interpretation:** For each theme, assess: is it well-defined? Does it have sufficient evidence? Are its ICs cohesive? Does the theme name accurately reflect its content?
-- **Comparative analysis:** If previous run results are available, compare across runs (codebook growth, theme stability, metric trends)
-- **Actionable recommendations:** Suggest specific next steps — "split this theme," "merge these ICs," "run 20 more reviews before trusting saturation," "lower auto_merge_threshold"
+### Implemented
+Layer 4 is live as `src/analyst_agent.py` (`AnalystAgent`). It runs automatically as the final pipeline step after Layer 3. Uses `or_smart` model (Sonnet-class). Input: full results dict with thematic structure, all 18+ quality metrics, and a confidence distribution summary. Output: structured `AnalyticalBrief` (Pydantic model) with metric flags, structural diagnostics, thematic interpretation per theme, and actionable recommendations. Persisted to DB and available in the pipeline results dict as `results["layer4"]`.
 
-### Architecture
-- Runs as a final pipeline step after Layer 3
-- Input: full results dict (JSON-serializable)
-- LLM call with structured prompt + all metric data
-- Output: structured analytical brief (markdown or structured dict)
-- Could use Sonnet 4.5 for interpretive depth
+Confidence distribution passed as summary stats only (not per-IC raw data) to avoid token bloat while still giving the model enough signal.
 
-### Key design decisions needed
-- How much context to feed (full thematic structure = large prompt)
-- Whether to chunk analysis (metrics → structure → recommendations) or single-pass
-- Output format: markdown report vs. structured JSON vs. interactive Q&A
-- Whether to persist the analytical brief to DB
+### Remaining gaps / future improvements
+- **Comparative analysis:** If previous run results exist, compare across runs (codebook growth, theme stability, metric trends). Depends on Codebook Versioning.
+- **Deeper thematic interpretation:** Currently interprets themes at a structural level. More detailed IC-level interpretation would require more prompt engineering and token budget.
+- **Interactive Q&A mode:** Layer 4 is currently one-shot. An interactive mode (analyst asks follow-up questions) is a future direction — requires session state management.
 
 ---
 
@@ -232,6 +222,21 @@ Stable theme pipeline first. Category gates only make sense once the themes goin
 
 ## Next Up
 
+### HIL: Terminal UX Improvements `[resolved]`
+Five improvements shipped together:
+
+**Top-K definition snippets:** Each similar existing code now shows a truncated (85-char) definition inline below its name and similarity score. Eliminates the need to memorise the codebook while reviewing candidates — the most common cognitive bottleneck in long sessions.
+
+**`?` expand command:** Typing `?` at the action prompt prints the full LLM reasoning (untruncated) plus the full definitions of all top-K ICs. The action menu re-appears afterward. Useful when the 200-char reasoning preview or 85-char definition snippets don't settle the question.
+
+**Reasoning truncation:** LLM reasoning is capped at 200 chars in the display. Long reasoning previously scrolled the quote off-screen. Truncated suffix shows a `?` hint.
+
+**Single-step undo (`U`):** At the action prompt, `U` reverses the immediately previous decision — for NEW (hard-deletes IC + quote from DB, removes from deferred embed queue), MERGE (deletes quote), REJECT (no DB writes, instant). The current candidate is re-displayed with a clean decision slate. Only one level deep; prevents double-undo.
+
+**Session stats in batch header:** Batch header now shows latest ITS value and running session totals (new/merged/rejected) from batch 2 onward. Gives orientation before each batch.
+
+**Files:** `src/hil.py`, `src/orchestrator.py`, `src/db.py` (`InitialCodeRepo.hard_delete()`, `VerbatimQuoteRepo.delete_by_id()`).
+
 ### HIL: Quote Context — Sentence Boundaries `[resolved]`
 Replace the current fixed 50-character context window around verbatim quotes with one full sentence before and one full sentence after the extracted span. Sentence boundaries are meaningful reading units; 50 chars of raw text is not. The actual stored quote (inside `[...]`) is unchanged — only the context display changes.
 
@@ -303,6 +308,46 @@ All LLM-facing Pydantic model fields have instruction-style descriptions. Commit
 **Problem:** When codebook sign-off is rejected (HIL Level 2), the ICs and quotes are already committed to the DB. If the analyst re-runs with "Build upon" instead of "Overwrite," the pipeline resumes with rejected data silently — it has no way to detect that the previous run ended in rejection.
 
 **Fix:** Record pipeline exit state to DB (a lightweight `pipeline_events` table or a single status flag). On startup with an existing DB, if the last run ended in codebook rejection, surface a clear warning before proceeding. Prerequisite: the Resume-from-Codebook `--skip-extraction` flag (above) should land first, since it provides the proper "resume from codebook" path rather than "re-run from scratch."
+
+---
+
+## Custom UI for HIL `[explore]`
+
+### Why and when
+The terminal HIL works but has a hard ceiling: everything relies on `input()` blocking Python execution. A custom UI lifts that ceiling entirely. Prerequisite alignment: **stabilise the workflow first** — codebook versioning and Layer 5 need to be solid before investing in UI. The terminal improvements above extend the runway significantly. Sequence recommendation: terminal now → Textual TUI as stepping stone → full custom app when workflow is stable.
+
+### Architectural prerequisite: async queue
+All current HIL is built on blocking `input()`. A custom UI requires decoupling. The right pattern: pipeline writes candidates to a queue/DB table, UI reads and renders, decisions are written back, pipeline polls. This is a real architectural change but it's the correct one — and it's already noted in the Plugin/IDE Integration item.
+
+### Phase 1 — Textual TUI (stepping stone) `[explore]`
+**Textual** is a Python TUI framework (used by IPython's terminal interface). It gives proper two-panel layout, mouse support, keyboard bindings, and scrollable panels while staying in the Python stack with no web server. The `input()` → async event change is the only required architectural shift. A meaningful quality-of-life upgrade at fraction of a full web app's effort.
+
+Key panels:
+- **Left:** persistent codebook — all current ICs, scrollable, grouped by theme if themes exist. Clicking an IC shows its full definition + quote count without leaving the candidate review.
+- **Right:** current candidate — name, definition, confidence, quote in context, top-K, LLM rec.
+- **Bottom bar:** live ITS, codebook size, session new/merge/reject counts. Updates after each decision.
+
+### Phase 2 — Full Custom App `[explore]`
+Framework options: **FastAPI + React** (web, most flexibility), **Tauri** (desktop, offline-first, filesystem access). Either would work — Tauri is worth considering given the offline/local-data nature of the tool.
+
+Key UX improvements over terminal that justify the investment:
+
+**Persistent codebook panel.** Solves the biggest cognitive bottleneck — the analyst never has to remember what an IC means mid-decision. Click any top-K match to see its full card: definition, quote count, example quote, confidence histogram, creation timestamp.
+
+**Quote highlighting in full segment.** Show the full segment text with the extracted span highlighted in color. Replaces `...before [quote] after...` with inline visual context. For long segments this is dramatically clearer.
+
+**Decision history + undo.** Scrollable session log: `✓ NEW: combat_feedback_loop | ↔ MERGED: price_complaint → value_perception`. Click any past decision to review it. Multi-level undo (N decisions back) with cascade handling for merges. Lets the analyst spot their own patterns — "I've rejected 8 straight, is the model miscalibrated?"
+
+**Batch preview card.** Before entering a batch: "Batch 5 | 8 candidates | 3 have high similarity to existing ICs (>0.65) | 1 flagged meta-commentary | ITS: 0.74". Analyst enters each batch with orientation.
+
+**Structured decision annotations.** Instead of free-text notes: rejection reason dropdown (meta / duplicate / noise / insufficient evidence), merge confidence (certain / uncertain). Feeds future analytics on analyst decision patterns and prompt quality.
+
+**Keyboard-first, mouse optional.** N/M/R shortcuts must stay. Mouse for IC browsing and codebook navigation. No pointer required for the decision loop itself.
+
+### What NOT to build yet
+- Real-time collaboration (multi-analyst) — significant complexity, wait until single-analyst flow is rock solid
+- Cloud sync — keep it local/offline first
+- Custom viz / dashboards — Layer 4 already provides interpretation; visualisation is additive, not prerequisite
 
 ---
 
@@ -385,4 +430,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-03-02 — Implemented: (1) Quote coverage per IC metric with interval union (quality_metrics.py + quality_report.py); (2) HIL display now shows segment ID + quote coverage % with ⚠ flag at >70%; (3) Production reasoning log mode configurable via eqd_config.yaml. All [ready] items now resolved. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*
+*Last updated: 2026-03-02 — Terminal HIL UX: top-K definitions, reasoning truncation+expand, single-step undo (U), session stats in batch header. Layer 4 status updated to [resolved] (AnalystAgent implemented). Custom UI section added [explore] with Textual TUI stepping stone + full custom app design. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*

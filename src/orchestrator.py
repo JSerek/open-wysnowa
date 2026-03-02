@@ -361,12 +361,19 @@ class Layer1Orchestrator:
 
             # ── 5. Process new candidates through comparator + HIL ────────
             if enable_hil and new_candidates:
+                its_history = self.its_tracker.history
+                latest_its = its_history[-1].its_value if its_history else None
                 display_batch_header(
                     batch_num, total_batches,
                     self.ic_repo.count_active(), len(new_candidates),
+                    its_value=latest_its,
+                    session_new=summary["new_ics_created"],
+                    session_merged=summary["merged"],
+                    session_rejected=summary["rejected"],
                 )
 
             batch_merge_count = 0
+            last_undo_ctx: Optional[Dict] = None  # single-step undo context
 
             for idx, (cand, seg_id, seg_text) in enumerate(new_candidates, 1):
                 # 5a. Run Codebook Comparator with precomputed embedding
@@ -420,15 +427,35 @@ class Layer1Orchestrator:
                         summary["meta_flagged"] += 1
 
                 if enable_hil:
+                    # Build ic_definitions for top-K display (on-demand, small N)
+                    ic_defs: Dict[str, str] = {}
+                    for sim in top_k:
+                        ic = self.ic_repo.get_by_id(sim.ic_id)
+                        if ic:
+                            ic_defs[sim.ic_id] = ic.definition
+
                     # 5b. Display for human review
                     display_candidate_review(
                         cand, comp_output, top_k, seg_text,
                         idx, len(new_candidates),
                         segment_id=seg_id,
+                        ic_definitions=ic_defs,
                     )
 
-                    # 5c. Get human decision (may loop for edit)
-                    action, target_idx, notes = self._hil_loop(cand, comp_output, top_k, seg_text, idx, len(new_candidates), seg_id=seg_id)
+                    # 5c. Get human decision (may loop for edit or undo)
+                    undo_state = {
+                        "ctx": last_undo_ctx,
+                        "deferred_quotes": deferred_quotes,
+                        "ic_defs": ic_defs,
+                    }
+                    action, target_idx, notes = self._hil_loop(
+                        cand, comp_output, top_k, seg_text,
+                        idx, len(new_candidates),
+                        seg_id=seg_id,
+                        undo_state=undo_state,
+                    )
+                    # Sync last_undo_ctx in case undo fired inside _hil_loop
+                    last_undo_ctx = undo_state["ctx"]
 
                     if action == "Q":
                         summary["quit_early"] = True
@@ -473,13 +500,30 @@ class Layer1Orchestrator:
                     # Track IC creation segment for meaning saturation breadth
                     if new_ic_id and seg_idx is not None:
                         self.ic_creation_segments[new_ic_id] = seg_idx
+                    # Build undo context
+                    last_undo_ctx = {
+                        "action": "new", "description": f"NEW: {cand.ic_name}",
+                        "ic_id": new_ic_id, "quote_id": quote.id if quote else None,
+                        "deferred_quote_ref": quote,
+                    }
                 elif result == "merge":
                     summary["merged"] += 1
                     batch_merge_count += 1
                     summary["coder_new_comp_merge"] += 1
+                    target_name = top_k[target_idx - 1].ic_name if target_idx and top_k else "?"
+                    last_undo_ctx = {
+                        "action": "merge",
+                        "description": f"MERGE: {cand.ic_name} → {target_name}",
+                        "ic_id": None, "quote_id": quote.id if quote else None,
+                        "deferred_quote_ref": quote,
+                    }
                 elif result == "reject":
                     summary["rejected"] += 1
                     summary["coder_new_comp_reject"] += 1
+                    last_undo_ctx = {
+                        "action": "reject", "description": f"REJECT: {cand.ic_name}",
+                        "ic_id": None, "quote_id": None, "deferred_quote_ref": None,
+                    }
 
             # Record per-batch merge rate
             self.batch_merge_rates.append({
@@ -566,28 +610,86 @@ class Layer1Orchestrator:
         candidate_num: int,
         total_candidates: int,
         seg_id: str = "",
+        undo_state: Optional[Dict] = None,
     ) -> Tuple[str, Optional[int], Optional[str]]:
         """
-        HIL loop that handles the Edit action (re-display after edit).
+        HIL loop that handles Edit (re-display after edit) and Undo (reverse previous
+        decision, re-display current candidate).
+
+        undo_state is a mutable dict shared with the caller:
+          {"ctx": undo_context_or_None, "deferred_quotes": list, "ic_defs": dict}
 
         Returns: (action, target_idx, notes)
         """
         current_candidate = candidate
+        undo_state = undo_state or {}
 
         while True:
-            action, target_idx, notes = prompt_decision(top_k)
+            ic_defs = undo_state.get("ic_defs", {})
+            undo_ctx = undo_state.get("ctx")
+            action, target_idx, notes = prompt_decision(
+                top_k,
+                full_reasoning=comp_output.reasoning or "",
+                ic_definitions=ic_defs,
+                can_undo=undo_ctx is not None,
+                last_decision_desc=undo_ctx.get("description", "") if undo_ctx else "",
+            )
 
             if action == "E":
                 current_candidate = prompt_edit_candidate(current_candidate)
-                # Re-display the edited candidate
                 display_candidate_review(
                     current_candidate, comp_output, top_k, seg_text,
                     candidate_num, total_candidates,
-                    segment_id=seg_id,
+                    segment_id=seg_id, ic_definitions=ic_defs,
                 )
-                continue  # Loop back for a decision on the edited version
+                continue
+
+            if action == "U" and undo_ctx:
+                self._undo_last_decision(undo_ctx, undo_state.get("deferred_quotes", []))
+                undo_state["ctx"] = None   # consumed — prevent double-undo
+                print(f"\n  ↩ Undone: {undo_ctx['description']}")
+                display_candidate_review(
+                    current_candidate, comp_output, top_k, seg_text,
+                    candidate_num, total_candidates,
+                    segment_id=seg_id, ic_definitions=ic_defs,
+                )
+                continue
 
             return action, target_idx, notes
+
+    # ── Undo ─────────────────────────────────────────────────────────────────
+
+    def _undo_last_decision(self, ctx: Dict, deferred_quotes: List) -> None:
+        """
+        Reverse the most recent HIL decision.
+
+        NEW:    hard-delete IC + quote from DB; remove from deferred_quotes.
+        MERGE:  hard-delete quote from DB; remove from deferred_quotes.
+        REJECT: no DB writes were made — nothing to reverse.
+
+        The undo context (ctx) must be the dict built immediately after
+        _apply_decision() returned. Once consumed, ctx["ic_id"] etc. are stale.
+        """
+        action = ctx.get("action", "")
+        ic_id   = ctx.get("ic_id")
+        quote_id = ctx.get("quote_id")
+        deferred_ref = ctx.get("deferred_quote_ref")
+
+        if action == "new":
+            if ic_id:
+                self.ic_repo.hard_delete(ic_id)
+            if quote_id:
+                self.quote_repo.delete_by_id(quote_id)
+        elif action == "merge":
+            if quote_id:
+                self.quote_repo.delete_by_id(quote_id)
+        # reject: nothing was written, nothing to delete
+
+        # Remove from deferred embed list if present
+        if deferred_ref and deferred_ref in deferred_quotes:
+            deferred_quotes.remove(deferred_ref)
+
+        logger.info(f"[UNDO] Reversed: {ctx.get('description', action)}")
 
     # ── Decision Application ─────────────────────────────────────────────────
 

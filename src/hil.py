@@ -19,6 +19,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.embeddings import SimilarityResult
 from src.models import BatchITS, ComparatorOutput, ICCandidate
 
+REASONING_PREVIEW = 200   # chars shown before truncation hint
+DEFINITION_PREVIEW = 85   # chars shown per top-K IC in candidate display
+
 
 # ── Display Constants ────────────────────────────────────────────────────────
 
@@ -71,10 +74,17 @@ def display_batch_header(
     total_batches: int,
     codebook_size: int,
     new_candidates: int,
+    its_value: Optional[float] = None,
+    session_new: int = 0,
+    session_merged: int = 0,
+    session_rejected: int = 0,
 ) -> None:
-    """Print batch header with progress info."""
+    """Print batch header with progress, codebook size, ITS, and session totals."""
     print(f"\n{SEPARATOR}")
-    print(f"  BATCH {batch_num}/{total_batches}  |  Codebook: {codebook_size} codes  |  New candidates: {new_candidates}")
+    its_str = f"  |  ITS: {its_value:.3f}" if its_value is not None else ""
+    print(f"  BATCH {batch_num}/{total_batches}  |  Codebook: {codebook_size} ICs{its_str}  |  Candidates: {new_candidates}")
+    if batch_num > 1:
+        print(f"  Session so far:  +{session_new} new  ↔ {session_merged} merged  ✗ {session_rejected} rejected")
     print(SEPARATOR)
 
 
@@ -86,13 +96,17 @@ def display_candidate_review(
     candidate_num: int,
     total_candidates: int,
     segment_id: str = "",
+    ic_definitions: Optional[Dict[str, str]] = None,
 ) -> None:
     """
     Display a candidate for human review.
 
     Shows: name, definition, verbatim quote in context,
-    top-K similar codes, LLM recommendation + reasoning.
+    top-K similar codes with truncated definitions,
+    LLM recommendation + reasoning (truncated, expandable via ?).
     """
+    ic_definitions = ic_definitions or {}
+
     print(f"\n{THIN_SEP}")
     seg_label = f"  seg: {segment_id}" if segment_id else ""
     print(f"  NEW IC CANDIDATE [{candidate_num}/{total_candidates}]{seg_label}")
@@ -118,17 +132,26 @@ def display_candidate_review(
     print(f"\n  Quote: {ellipsis_before}{before}[{quote}]{after}{ellipsis_after}")
     print(f"         span [{start}:{end}]  coverage: {coverage_pct:.0f}% (of {seg_len} chars){coverage_flag}")
 
-    # Top-K similar codes
+    # Top-K similar codes with truncated definitions
     if top_k:
         print(f"\n  SIMILAR EXISTING CODES:")
         for i, sim_result in enumerate(top_k, 1):
             print(f"    [{i}] {sim_result.ic_name}  (sim: {sim_result.similarity:.3f})")
+            defn = ic_definitions.get(sim_result.ic_id, "")
+            if defn:
+                preview = defn[:DEFINITION_PREVIEW] + "…" if len(defn) > DEFINITION_PREVIEW else defn
+                print(f"         {preview}")
     else:
         print(f"\n  SIMILAR EXISTING CODES: (none)")
 
-    # LLM recommendation
+    # LLM recommendation + truncated reasoning
+    reasoning = comparator_output.reasoning or ""
+    truncated = len(reasoning) > REASONING_PREVIEW
+    reasoning_preview = reasoning[:REASONING_PREVIEW] + "…" if truncated else reasoning
     print(f"\n  LLM RECOMMENDATION: {comparator_output.recommendation.value}")
-    print(f"  Reasoning: {comparator_output.reasoning}")
+    print(f"  Reasoning: {reasoning_preview}")
+    if truncated:
+        print(f"  (type ? to expand reasoning + full IC definitions)")
     if comparator_output.merge_target_name:
         print(f"  Merge target: {comparator_output.merge_target_name}")
 
@@ -158,18 +181,22 @@ def display_batch_summary(
 
 def prompt_decision(
     top_k: List[SimilarityResult],
+    full_reasoning: str = "",
+    ic_definitions: Optional[Dict[str, str]] = None,
+    can_undo: bool = False,
+    last_decision_desc: str = "",
 ) -> Tuple[str, Optional[int], Optional[str]]:
     """
     Prompt the human for a decision on a candidate.
 
     Returns: (action, merge_target_index, notes)
-      - action: one of N, M, S, R, E, Q
-      - merge_target_index: 1-based index into top_k (only for M/S actions)
+      - action: one of N, M, R, E, Q, U
+      - merge_target_index: 1-based index into top_k (only for M actions)
       - notes: optional free-text notes
 
     Validates input in a loop until a valid choice is given.
     """
-    # Build valid merge targets
+    ic_definitions = ic_definitions or {}
     merge_targets = list(range(1, len(top_k) + 1)) if top_k else []
 
     print(f"\n  Choose action:")
@@ -179,6 +206,9 @@ def prompt_decision(
         print(f"    [M{targets_str}] MERGE with similar code (e.g., M1)")
     print(f"    [R] REJECT candidate")
     print(f"    [E] EDIT candidate then decide")
+    if can_undo:
+        print(f"    [U] UNDO last decision  ({last_decision_desc})")
+    print(f"    [?] Expand: full reasoning + IC definitions")
     print(f"    [Q] QUIT batch review")
 
     while True:
@@ -198,6 +228,31 @@ def prompt_decision(
         elif raw == "Q":
             return "Q", None, None
 
+        elif raw == "U":
+            if can_undo:
+                return "U", None, None
+            print("  Nothing to undo.")
+
+        elif raw == "?":
+            # Expand: show full reasoning + all top-K full definitions
+            if full_reasoning:
+                print(f"\n  FULL REASONING:\n  {full_reasoning}")
+            if top_k and ic_definitions:
+                print(f"\n  FULL IC DEFINITIONS:")
+                for i, sim_result in enumerate(top_k, 1):
+                    defn = ic_definitions.get(sim_result.ic_id, "(not found)")
+                    print(f"    [{i}] {sim_result.ic_name}  (sim: {sim_result.similarity:.3f})")
+                    print(f"         {defn}")
+            # Re-print the action menu after expanding
+            print(f"\n  Choose action:")
+            print(f"    [N] Accept as NEW code")
+            if merge_targets:
+                targets_str = ",".join(str(t) for t in merge_targets)
+                print(f"    [M{targets_str}] MERGE (e.g., M1)")
+            print(f"    [R] REJECT  [E] EDIT  [Q] QUIT")
+            if can_undo:
+                print(f"    [U] UNDO  ({last_decision_desc})")
+
         elif raw.startswith("M") and len(raw) > 1:
             try:
                 idx = int(raw[1:])
@@ -207,14 +262,12 @@ def prompt_decision(
                     if confirm in ("Y", "YES"):
                         notes = _prompt_notes()
                         return "M", idx, notes
-                    # else: fall back to action prompt silently
                     continue
             except ValueError:
                 pass
             print(f"  Invalid merge target. Valid: {merge_targets}")
 
         elif raw == "M" and merge_targets:
-            # Default to M1
             target_name = top_k[0].ic_name
             confirm = input(f"\n  → Merging into: [1] {target_name}\n  Confirm? [Y/N]: ").strip().upper()
             if confirm in ("Y", "YES"):
@@ -222,7 +275,7 @@ def prompt_decision(
                 return "M", 1, notes
 
         else:
-            valid = "N, M, R, E, Q" if merge_targets else "N, R, E, Q"
+            valid = "N, M, R, E, U, ?, Q" if merge_targets else "N, R, E, U, ?, Q"
             print(f"  Invalid input. Valid choices: {valid}")
 
 

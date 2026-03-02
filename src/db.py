@@ -353,6 +353,11 @@ class InitialCodeRepo:
             ).fetchone()
         return row["cnt"]
 
+    def hard_delete(self, ic_id: str) -> None:
+        """Hard-delete an IC by ID. Used only for single-step HIL undo."""
+        with self.db.connect() as conn:
+            conn.execute("DELETE FROM initial_codes WHERE id=?", (ic_id,))
+
     @staticmethod
     def _row_to_ic(row: sqlite3.Row) -> InitialCode:
         emb = json.loads(row["embedding_json"]) if row["embedding_json"] else None
@@ -409,6 +414,11 @@ class VerbatimQuoteRepo:
                 (json.dumps(vq.quote_embedding_json) if vq.quote_embedding_json else None,
                  vq.id),
             )
+
+    def delete_by_id(self, quote_id: str) -> None:
+        """Hard-delete a quote by ID. Used only for single-step HIL undo."""
+        with self.db.connect() as conn:
+            conn.execute("DELETE FROM verbatim_quotes WHERE id=?", (quote_id,))
 
     @staticmethod
     def _row_to_vq(row: sqlite3.Row) -> VerbatimQuote:
