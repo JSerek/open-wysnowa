@@ -126,6 +126,7 @@ class ProcessingConfig(BaseModel):
     coherence_threshold: float = 1.0     # normalized coherence below this → flag/dissolve
     coherence_threshold_small: float = 0.90  # threshold for themes with <5 ICs
     meta_ic_filter: MetaICFilterConfig = Field(default_factory=MetaICFilterConfig)
+    reasoning_log_mode: str = "full"  # "full" | "failures_only"
 
 
 class EQDConfig(BaseModel):

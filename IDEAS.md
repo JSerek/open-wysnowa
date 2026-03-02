@@ -311,8 +311,15 @@ All LLM-facing Pydantic model fields have instruction-style descriptions. Commit
 ### Retry Effort Escalation `[later]`
 When instructor retries a failed structured output call, the reasoning budget is consumed again at the same effort level. A smarter approach: start at `low` on first attempt, escalate to `medium` on retry 1, `high` on retry 2. This means cheap attempts for the common case, and heavier reasoning only for genuinely ambiguous outputs. Requires hooking into instructor's retry callback to modify `extra_body` between attempts. Park until reasoning models are the primary coder/comparator model and retry cost is measurable.
 
-### Production Reasoning Log Mode `[ready]`
-The `ReasoningLogger` already supports `mode="failures_only"` — switch it in `pipeline.py` before go-live. In production, logging every call (especially for non-reasoning models that log zeros) is low-value noise. Failures-only mode retains traces for debugging without per-call overhead. Implement as a `reasoning_log_mode` field in `eqd_config.yaml` (`full` / `failures_only`, default `full`), read in `pipeline.py` when constructing `ReasoningLogger`.
+### Quote Coverage Per IC `[resolved]`
+Per-IC evidence coverage: what fraction of a segment's characters are covered by each IC's grounding quote(s). For multiple quotes from the same segment, uses interval union (sorted merge of `[span_start, span_end]` intervals) to avoid double-counting. Quotes from different segments are independent. Coverage ratio = `union_chars / segment_char_count`. Flagged when >70%.
+
+Implemented in `quality_metrics.py` as `compute_quote_coverage_per_ic()`, called from `compute_all()`. Display in `quality_report.py` shows overall mean/max, then lists flagged ICs (>70% coverage) or top-5 by max coverage if none flagged. HIL display also shows per-candidate coverage inline: `coverage: 65% (of 300 chars)` with ⚠ flag when >70%.
+
+Note: prompt-level character count instructions deliberately omitted — LLMs do not reliably count characters mid-generation, and constraining extraction length would harm batch processing. Measurement-first: flag outliers, let empirical data calibrate thresholds over time.
+
+### Production Reasoning Log Mode `[resolved]`
+The `ReasoningLogger` already supports `mode="failures_only"` — switch it in `pipeline.py` before go-live. In production, logging every call (especially for non-reasoning models that log zeros) is low-value noise. Failures-only mode retains traces for debugging without per-call overhead. Implemented as `reasoning_log_mode` field in `eqd_config.yaml` (`full` / `failures_only`, default `full`), read in `pipeline.py` when constructing `ReasoningLogger`. Also added `reasoning_log_mode: str` to `ProcessingConfig` in `config.py`.
 
 ---
 
@@ -378,4 +385,4 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-03-01 — Implemented three coder diagnostics: (1) Confidence redefined as novelty signal in prompts.py + models.py; (2) Coder reuse rate 2×2 matrix added to orchestrator.py, quality_metrics.py, quality_report.py; (3) Targeted retry for batch-missing segments in coder_agent.py. Remaining ready: Production Reasoning Log Mode. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*
+*Last updated: 2026-03-02 — Implemented: (1) Quote coverage per IC metric with interval union (quality_metrics.py + quality_report.py); (2) HIL display now shows segment ID + quote coverage % with ⚠ flag at >70%; (3) Production reasoning log mode configurable via eqd_config.yaml. All [ready] items now resolved. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*

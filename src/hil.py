@@ -85,6 +85,7 @@ def display_candidate_review(
     segment_text: str,
     candidate_num: int,
     total_candidates: int,
+    segment_id: str = "",
 ) -> None:
     """
     Display a candidate for human review.
@@ -93,7 +94,8 @@ def display_candidate_review(
     top-K similar codes, LLM recommendation + reasoning.
     """
     print(f"\n{THIN_SEP}")
-    print(f"  NEW IC CANDIDATE [{candidate_num}/{total_candidates}]")
+    seg_label = f"  seg: {segment_id}" if segment_id else ""
+    print(f"  NEW IC CANDIDATE [{candidate_num}/{total_candidates}]{seg_label}")
     print(THIN_SEP)
 
     # Candidate info
@@ -101,17 +103,20 @@ def display_candidate_review(
     print(f"  Definition: {candidate.definition}")
     print(f"  Confidence: {candidate.confidence:.0%}")
 
-    # Verbatim quote with ±1 sentence context
+    # Verbatim quote with ±1 sentence context + coverage
     start = candidate.span_start
     end = candidate.span_end
+    seg_len = len(segment_text)
     quote = segment_text[start:end]
+    coverage_pct = (end - start) / seg_len * 100 if seg_len > 0 else 0.0
+    coverage_flag = "  ⚠ high" if coverage_pct > 70 else ""
     before, after = _sentence_context(segment_text, start, end)
 
     ellipsis_before = "..." if before else ""
     ellipsis_after  = "..." if after else ""
 
     print(f"\n  Quote: {ellipsis_before}{before}[{quote}]{after}{ellipsis_after}")
-    print(f"         span [{start}:{end}]")
+    print(f"         span [{start}:{end}]  coverage: {coverage_pct:.0f}% (of {seg_len} chars){coverage_flag}")
 
     # Top-K similar codes
     if top_k:

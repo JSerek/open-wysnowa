@@ -282,6 +282,9 @@ class QualityMetricsEngine:
         coder_confidence = self.compute_coder_confidence(new_ic_confidences)
         results["coder_confidence"] = coder_confidence
 
+        # Quote Coverage Per IC
+        results["quote_coverage"] = self.compute_quote_coverage_per_ic()
+
         # Coder Reuse Rate (2×2 matrix: coder flagged vs comparator outcome)
         results["coder_reuse"] = {
             "flagged_match": kwargs.get("coder_flagged_match", 0),
@@ -1532,3 +1535,120 @@ class QualityMetricsEngine:
             f"{flagged_count} themes flagged (<0.70)"
         )
         return result
+
+    # ── P5: Quote Coverage Per IC ─────────────────────────────────────────────
+
+    def compute_quote_coverage_per_ic(self) -> Dict[str, Any]:
+        """
+        Per-IC quote coverage: what fraction of each segment's characters are
+        covered by that IC's evidence quotes.
+
+        For ICs with multiple quotes from the SAME segment, uses interval union
+        (inclusion-exclusion) to avoid double-counting overlapping spans:
+            covered = union of all [span_start, span_end] intervals
+        Quotes from DIFFERENT segments are independent — each gets its own ratio.
+
+        Coverage ratio = union_chars / segment_char_count
+
+        Returns {
+            "per_ic": [
+                {
+                    "ic_id": str,
+                    "ic_name": str,
+                    "coverages": [float, ...],   # one per (ic, segment) pair
+                    "mean_coverage": float,
+                    "max_coverage": float,
+                    "high_coverage_segments": int,  # segments where coverage > 0.70
+                },
+                ...
+            ],
+            "overall_mean": float,
+            "overall_max": float,
+            "high_coverage_count": int,   # (ic, segment) pairs > 70%
+            "total_ic_segment_pairs": int,
+        }
+        """
+        # Single query: all quotes with spans
+        with self.db.connect() as conn:
+            quote_rows = conn.execute(
+                "SELECT ic_id, segment_id, span_start, span_end "
+                "FROM verbatim_quotes"
+            ).fetchall()
+            seg_rows = conn.execute(
+                "SELECT id, char_count FROM segments"
+            ).fetchall()
+
+        seg_lengths: Dict[str, int] = {r["id"]: r["char_count"] for r in seg_rows}
+
+        # Group spans: {ic_id: {segment_id: [(start, end), ...]}}
+        ic_seg_spans: Dict[str, Dict[str, List[Tuple[int, int]]]] = {}
+        for row in quote_rows:
+            ic_id = row["ic_id"]
+            seg_id = row["segment_id"]
+            span = (row["span_start"], row["span_end"])
+            ic_seg_spans.setdefault(ic_id, {}).setdefault(seg_id, []).append(span)
+
+        def _interval_union(intervals: List[Tuple[int, int]]) -> int:
+            """Compute total chars covered by the union of intervals."""
+            if not intervals:
+                return 0
+            sorted_ivs = sorted(intervals)
+            merged_end = sorted_ivs[0][1]
+            total = sorted_ivs[0][1] - sorted_ivs[0][0]
+            for start, end in sorted_ivs[1:]:
+                if start < merged_end:          # overlap — extend current
+                    if end > merged_end:
+                        total += end - merged_end
+                        merged_end = end
+                else:                           # gap — new interval
+                    total += end - start
+                    merged_end = end
+            return total
+
+        codebook = self.ic_repo.get_all_active()
+        ic_names: Dict[str, str] = {ic.id: ic.name for ic in codebook}
+
+        per_ic = []
+        all_coverages: List[float] = []
+
+        for ic_id, seg_spans in ic_seg_spans.items():
+            coverages = []
+            for seg_id, spans in seg_spans.items():
+                seg_len = seg_lengths.get(seg_id, 0)
+                if seg_len == 0:
+                    continue
+                union_chars = _interval_union(spans)
+                ratio = union_chars / seg_len
+                coverages.append(round(ratio, 4))
+
+            if not coverages:
+                continue
+
+            all_coverages.extend(coverages)
+            high_count = sum(1 for c in coverages if c > 0.70)
+            per_ic.append({
+                "ic_id": ic_id,
+                "ic_name": ic_names.get(ic_id, ic_id),
+                "coverages": coverages,
+                "mean_coverage": round(sum(coverages) / len(coverages), 4),
+                "max_coverage": round(max(coverages), 4),
+                "high_coverage_segments": high_count,
+            })
+
+        per_ic.sort(key=lambda x: x["max_coverage"], reverse=True)
+
+        overall_mean = round(sum(all_coverages) / len(all_coverages), 4) if all_coverages else 0.0
+        overall_max = round(max(all_coverages), 4) if all_coverages else 0.0
+        high_coverage_count = sum(1 for c in all_coverages if c > 0.70)
+
+        logger.info(
+            f"Quote coverage per IC: mean={overall_mean:.1%}, "
+            f"max={overall_max:.1%}, high-coverage pairs={high_coverage_count}"
+        )
+        return {
+            "per_ic": per_ic,
+            "overall_mean": overall_mean,
+            "overall_max": overall_max,
+            "high_coverage_count": high_coverage_count,
+            "total_ic_segment_pairs": len(all_coverages),
+        }

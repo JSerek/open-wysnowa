@@ -424,10 +424,11 @@ class Layer1Orchestrator:
                     display_candidate_review(
                         cand, comp_output, top_k, seg_text,
                         idx, len(new_candidates),
+                        segment_id=seg_id,
                     )
 
                     # 5c. Get human decision (may loop for edit)
-                    action, target_idx, notes = self._hil_loop(cand, comp_output, top_k, seg_text, idx, len(new_candidates))
+                    action, target_idx, notes = self._hil_loop(cand, comp_output, top_k, seg_text, idx, len(new_candidates), seg_id=seg_id)
 
                     if action == "Q":
                         summary["quit_early"] = True
@@ -564,6 +565,7 @@ class Layer1Orchestrator:
         seg_text: str,
         candidate_num: int,
         total_candidates: int,
+        seg_id: str = "",
     ) -> Tuple[str, Optional[int], Optional[str]]:
         """
         HIL loop that handles the Edit action (re-display after edit).
@@ -581,6 +583,7 @@ class Layer1Orchestrator:
                 display_candidate_review(
                     current_candidate, comp_output, top_k, seg_text,
                     candidate_num, total_candidates,
+                    segment_id=seg_id,
                 )
                 continue  # Loop back for a decision on the edited version
 

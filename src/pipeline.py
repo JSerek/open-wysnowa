@@ -67,12 +67,12 @@ class EQDPipeline:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         self.run_id = f"{self.config.study.name}_{ts}"
 
-        # Init reasoning logger (full mode during development/testing)
+        # Init reasoning logger — mode controlled by config (full | failures_only)
         log_dir = Path(db_path).parent
         self.reasoning_logger = ReasoningLogger(
             run_id=self.run_id,
             log_dir=log_dir,
-            mode="full",
+            mode=self.config.processing.reasoning_log_mode,
         )
 
         # Init shared services

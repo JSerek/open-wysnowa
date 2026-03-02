@@ -104,6 +104,31 @@ def display_codebook_report(metrics: Dict[str, Any]) -> None:
                 flag = " ⚠ coder over-generates" if flip_rate > 0.40 else ""
                 print(f"    Comparator flip rate (merge+reject / new-path): {flip_rate:.0%}{flag}")
 
+    # Quote Coverage Per IC
+    qcov = metrics.get("quote_coverage", {})
+    per_ic_cov = qcov.get("per_ic", [])
+    if per_ic_cov:
+        print(f"\n  {SECTION_SEP}")
+        print(f"  QUOTE COVERAGE PER IC")
+        overall_mean = qcov.get("overall_mean", 0.0)
+        overall_max  = qcov.get("overall_max", 0.0)
+        high_count   = qcov.get("high_coverage_count", 0)
+        total_pairs  = qcov.get("total_ic_segment_pairs", 0)
+        flag_summary = f"  ⚠ {high_count} pairs >70%" if high_count > 0 else ""
+        print(f"    overall: mean={overall_mean:.0%}  max={overall_max:.0%}  "
+              f"pairs={total_pairs}{flag_summary}")
+        # Show only ICs with at least one high-coverage segment, or top-5 by max
+        flagged_ics = [ic for ic in per_ic_cov if ic["high_coverage_segments"] > 0]
+        show_ics = flagged_ics if flagged_ics else per_ic_cov[:5]
+        if flagged_ics:
+            print(f"    ICs with high-coverage evidence (>70% of segment):")
+        else:
+            print(f"    Top ICs by max coverage:")
+        for ic in show_ics:
+            high_flag = f"  ⚠ {ic['high_coverage_segments']} seg >70%" if ic["high_coverage_segments"] > 0 else ""
+            name = ic["ic_name"][:42].ljust(42)
+            print(f"      {name}  mean={ic['mean_coverage']:.0%}  max={ic['max_coverage']:.0%}{high_flag}")
+
     # ITS curve
     its_history: List[BatchITS] = metrics.get("its_history", [])
     if its_history:
