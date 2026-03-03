@@ -428,6 +428,49 @@ Package EQD-AI as an installable plugin for agent-enabled IDEs — specifically 
 ### Multi-Dataset Analysis `[later]`
 Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C) and compare thematic structures. Which themes are universal? Which are game-specific? This moves from single-product analysis to cross-product insights. Depends on codebook versioning being stable.
 
+### Complementary Extraction Pass `[design]`
+**Problem:** A single Coder pass on a segment extracts the most salient ICs but may miss secondary phenomena — especially in long reviews covering multiple topics or in reviews where the dominant theme overshadows subtler signals.
+
+**Idea:** After the standard Layer 1 pass, run a second Coder pass on the same segments, explicitly informed of what was already extracted, and ask it to identify *additional* evidence not yet grounded.
+
+**Three sub-variants (from most targeted to most open):**
+
+1. **Span-targeted pass (recommended):** Compute uncovered character spans per segment (positions not yet within any `span_start:span_end` interval). Send only those spans — as focused mini-segments with a small window of surrounding context — through the standard Coder → Comparator → HIL pipeline. Avoids re-extracting known evidence. Naturally integrates with the existing quote coverage metric (`>70%` flagged ICs indicate which segments are already well-covered, implying lower marginal return on a second pass).
+
+2. **Context-aware pass:** Inject existing ICs as "already found" in the Coder system prompt: *"The following codes have already been extracted from this segment: [list]. Look for additional evidence not yet represented."* Simpler to implement; relies on the LLM to self-disambiguate. Risk: LLM may still reproduce near-duplicates (mitigated by Comparator deduplication).
+
+3. **Blinded pass:** Run a full second Coder pass without informing it of existing codes, let the Comparator handle all deduplication. Highest redundancy, but useful as an estimate of how much evidence a single pass misses (diagnostic value).
+
+**Implementation notes:** Span-targeted variant is cleanest architecturally. `compute_quote_coverage_per_ic()` already provides per-segment coverage data. The gap spans (complement of covered intervals) are easy to extract. Each gap becomes a mini-segment ID `{segment_id}_gap_{n}` — existing pipeline handles it without changes. The Coder prompt gets a new optional `known_context` field: a short summary of already-found ICs.
+
+**When to trigger:** Could be automatic (run after every standard pass) or analyst-triggered via HIL (new option at batch end: `[2nd pass on uncovered spans?]`). Analyst-triggered is safer — avoids over-extraction on already-saturated segments.
+
+**Open question:** Does the complementary pass measurably increase codebook completeness, or does the standard pass already capture >90% of the signal? Requires empirical testing. Should be benchmarked against a held-out dataset with manual ground truth.
+
 ---
 
-*Last updated: 2026-03-02 — Terminal HIL UX: top-K definitions, reasoning truncation+expand, single-step undo (U), session stats in batch header. Layer 4 status updated to [resolved] (AnalystAgent implemented). Custom UI section added [explore] with Textual TUI stepping stone + full custom app design. Remaining design: Segment Faithfulness Scoring, Re-run Detection After Codebook Rejection.*
+### Split IC (Evidence Splitting) `[design]`
+**Problem:** High-coverage quotes (`>70%` of segment chars) often contain multiple distinct phenomena bundled into a single IC. A skilled qualitative coder would split these into separate codes, each grounded in its specific sub-span. The current HIL only offers Accept / Merge / Reject — there is no mechanism to say "this IC is real but it covers too much."
+
+**Idea:** Add a `[S]` Split action to the HIL prompt-decision menu. When triggered on a high-coverage candidate (or any candidate the analyst judges to be over-broad), the analyst:
+
+1. Sees the full quote with character positions labelled.
+2. Defines 2+ sub-spans (e.g., `[0:80]` and `[81:210]`) by entering character ranges.
+3. Optionally provides a suggested name/definition for each sub-IC, or leaves the LLM to propose them.
+4. Each sub-IC is treated as a new candidate and sent through the standard Comparator → HIL flow (similarity check, Merge / Accept / Reject).
+5. The original IC is deprecated (removed from codebook) if all its evidence has been reassigned; kept if it has other quotes from different segments.
+
+**Implementation notes:**
+- HIL `prompt_decision()` gains `can_split: bool` flag (true when `coverage_pct > 70`).
+- New `prompt_split_candidate()` function: shows quote with position ruler, collects sub-span tuples, optional name hints.
+- Orchestrator `_hil_loop()`: on `S`, calls `prompt_split_candidate()`, creates two new `ICCandidate` objects (with adjusted `span_start`, `span_end`, `quote_text`, `confidence=candidate.confidence`), appends them to the candidate queue (inserts before current position so they are reviewed next).
+- The original candidate is treated as Rejected (not persisted) once the split sub-ICs are queued.
+- Undo: undoing a split simply removes both queued sub-ICs and re-presents the original candidate.
+
+**UX note:** The "define sub-spans by character range" UI is terminal-hostile — analysts would need to count characters or scroll back to the quote ruler. A better UX might be: print the quote as a numbered line with tick marks every 10 chars, let the analyst enter split word-offsets (e.g., "split after word 15"). Or: let them paste any two non-overlapping verbatim sub-strings and compute the spans automatically via string search. The custom UI (Textual TUI / web) would handle this much more naturally with click-to-select span highlighting.
+
+**Dependency:** Works best in conjunction with the Complementary Pass — split ICs may reveal gaps that the standard pass missed.
+
+---
+
+*Last updated: 2026-03-03 — Context window: replaced sentence-boundary detection with 130-char fixed window + newline collapse + word-boundary snap. HIL display: visual ─── separators around quote block, Span + Coverage on dedicated lines with quote char count. Added [design]: Complementary Extraction Pass (span-targeted variant recommended), Split IC evidence splitting.*

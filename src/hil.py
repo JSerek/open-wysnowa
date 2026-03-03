@@ -21,48 +21,50 @@ from src.models import BatchITS, ComparatorOutput, ICCandidate
 
 REASONING_PREVIEW = 200   # chars shown before truncation hint
 DEFINITION_PREVIEW = 85   # chars shown per top-K IC in candidate display
+CONTEXT_WINDOW = 130      # chars of surrounding context shown before/after quote
 
 
 # ── Display Constants ────────────────────────────────────────────────────────
 
 SEPARATOR = "=" * 70
 THIN_SEP = "-" * 70
+QUOTE_SEP = "  " + "─" * 66
 
 
-def _sentence_context(text: str, start: int, end: int) -> tuple[str, str]:
+def _fixed_context(text: str, start: int, end: int) -> tuple[str, str]:
     """
-    Return the one sentence immediately before and after the span [start:end].
+    Return up to CONTEXT_WINDOW characters immediately before and after [start:end].
 
-    Sentence boundary detection: scan backward from `start` for the nearest
-    sentence-ending punctuation (.!?), then forward from `end` for the next one.
-    Falls back to the full remaining text if no boundary is found.
+    Newlines and tabs are collapsed to single spaces so numbered lists,
+    bullet points, and informal UGC don't bleed across display lines.
 
-    Returns (before, after) as strings, each stripped of leading/trailing
-    whitespace. Either may be empty if the span is at the very start or end.
+    Word-boundary snapping: if the window cuts mid-word, trim to the nearest
+    space so the context reads cleanly.
+
+    Returns (before, after) as strings, stripped. Either may be empty.
     """
-    # ── Before: scan left from start for previous sentence end ──────────────
-    sentence_endings = {'.', '!', '?'}
+    import re
+
+    def _collapse(s: str) -> str:
+        return re.sub(r"[\r\n\t]+", " ", s).strip()
+
     before = ""
     if start > 0:
-        # Find the sentence-end punctuation just before our span
-        boundary = -1
-        for i in range(start - 1, -1, -1):
-            if text[i] in sentence_endings:
-                boundary = i
-                break
-        # The "before" sentence starts after that punctuation (or at text[0])
-        before_start = boundary + 1 if boundary >= 0 else 0
-        before = text[before_start:start].strip()
+        raw_before = text[max(0, start - CONTEXT_WINDOW):start]
+        collapsed = _collapse(raw_before)
+        # If we couldn't show from position 0, snap to first word boundary
+        if start - CONTEXT_WINDOW > 0 and " " in collapsed:
+            collapsed = collapsed[collapsed.index(" ") + 1:]
+        before = collapsed
 
-    # ── After: scan right from end for next sentence end ────────────────────
     after = ""
     if end < len(text):
-        boundary = len(text)
-        for i in range(end, len(text)):
-            if text[i] in sentence_endings:
-                boundary = i + 1  # include the punctuation
-                break
-        after = text[end:boundary].strip()
+        raw_after = text[end:min(len(text), end + CONTEXT_WINDOW)]
+        collapsed = _collapse(raw_after)
+        # If we couldn't show to end, snap to last word boundary
+        if end + CONTEXT_WINDOW < len(text) and " " in collapsed:
+            collapsed = collapsed[:collapsed.rindex(" ")]
+        after = collapsed
 
     return before, after
 
@@ -117,20 +119,24 @@ def display_candidate_review(
     print(f"  Definition: {candidate.definition}")
     print(f"  Confidence: {candidate.confidence:.0%}")
 
-    # Verbatim quote with ±1 sentence context + coverage
+    # Verbatim quote with ±CONTEXT_WINDOW char context + coverage
     start = candidate.span_start
     end = candidate.span_end
     seg_len = len(segment_text)
     quote = segment_text[start:end]
-    coverage_pct = (end - start) / seg_len * 100 if seg_len > 0 else 0.0
+    quote_len = end - start
+    coverage_pct = quote_len / seg_len * 100 if seg_len > 0 else 0.0
     coverage_flag = "  ⚠ high" if coverage_pct > 70 else ""
-    before, after = _sentence_context(segment_text, start, end)
+    before, after = _fixed_context(segment_text, start, end)
 
-    ellipsis_before = "..." if before else ""
-    ellipsis_after  = "..." if after else ""
+    ellipsis_before = "..." if (before and max(0, start - CONTEXT_WINDOW) > 0) else ""
+    ellipsis_after  = "..." if (after and end + CONTEXT_WINDOW < seg_len) else ""
 
-    print(f"\n  Quote: {ellipsis_before}{before}[{quote}]{after}{ellipsis_after}")
-    print(f"         span [{start}:{end}]  coverage: {coverage_pct:.0f}% (of {seg_len} chars){coverage_flag}")
+    print(f"\n{QUOTE_SEP}")
+    print(f"  {ellipsis_before}{before}[{quote}]{after}{ellipsis_after}")
+    print(f"{QUOTE_SEP}")
+    print(f"  Span:     [{start}:{end}]")
+    print(f"  Coverage: {coverage_pct:.0f}%  ({quote_len} of {seg_len} chars){coverage_flag}")
 
     # Top-K similar codes with truncated definitions
     if top_k:

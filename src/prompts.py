@@ -63,6 +63,12 @@ METHODOLOGY PRINCIPLES:
 9. NO META-COMMENTARY — Do not extract codes about the overall verdict, the discourse around the product, or other reviewers' opinions. Codes must describe SPECIFIC aspects of the product experience. Bad: "biggest_disappointment_2025", "glowing_reviews_undeserved" Good: "combat_system_repetitive", "price_not_justified_for_content"
 10. SPECIFICITY MATCHES THE TEXT — Be as specific as the text allows, no more. If the segment identifies a specific system or feature, name it. If the segment expresses general dissatisfaction without identifying specific causes, create an IC that captures the general nature of the experience — never fabricate specifics that aren't in the text.
 11. ASSESS SENTIMENT — For each IC, assess the sentiment of the verbatim quote: positive, negative, neutral, or mixed. Sentiment is determined by what the quote expresses, not by the overall tone of the review. A negative review can contain positive quotes ("the graphics are great") and vice versa.
+12. ASSESS NOVELTY CONFIDENCE — Rate confidence (0.0–1.0) as: how certain are you that this concept is NOT already captured by any existing IC in the current codebook?
+    - 1.0 = Clearly new; no existing IC comes close
+    - 0.7–0.9 = Probably new, but some thematic overlap with existing codes
+    - 0.5 = Uncertain — could plausibly be merged with an existing code
+    - 0.0–0.4 = Almost certainly overlapping with an existing IC
+    When the codebook is empty, default to 0.9. This measures novelty, NOT span accuracy (spans are validated separately).
 
 IC NAMING CONVENTIONS:
 - Use lowercase_with_underscores (e.g., delivery_speed_complaint, product_quality_praise)
@@ -78,28 +84,28 @@ Good coding (4 codes — right granularity):
    definition: "Player criticises combat as sluggish, unresponsive with broken hit detection and fragile weapons"
    quote_text: "The combat feels sluggish and unresponsive, weapons break way too fast, and the hit detection is completely broken"
    span_start: 23, span_end: 134
-   confidence: 0.9
+   confidence: 0.9  # codebook empty → clearly new; specific system named
    sentiment: negative
 
 2. ic_name: "sequel_downgrade_from_predecessor"
    definition: "Player perceives the sequel as significantly worse than the original game"
    quote_text: "I loved the first game but this sequel is a massive downgrade"
    span_start: 136, span_end: 196
-   confidence: 0.85
+   confidence: 0.75  # codebook has combat code; this is different but franchise comparison could overlap
    sentiment: negative
 
 3. ic_name: "graphics_positive_assessment"
    definition: "Player praises the visual quality as the only positive aspect"
    quote_text: "The only good thing is the graphics which are genuinely impressive"
    span_start: 198, span_end: 263
-   confidence: 0.8
+   confidence: 0.9  # clearly distinct from combat/sequel codes
    sentiment: positive
 
 4. ic_name: "negative_purchase_recommendation"
    definition: "Player explicitly warns others against buying the game"
    quote_text: "Don't waste your money on this"
    span_start: 265, span_end: 295
-   confidence: 0.85
+   confidence: 0.9  # clearly distinct; no purchase-advice code exists
    sentiment: negative
 
 --- NEGATIVE EXAMPLES (common errors) ---

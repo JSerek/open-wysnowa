@@ -143,10 +143,11 @@ class InitialCode(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Coder agent's self-assessed confidence (0–1) at the time this IC "
-            "was first created. Reflects how certain the model was that the "
-            "extracted concept was grounded in the verbatim text. None for ICs "
-            "created before this field was introduced."
+            "Coder agent's novelty confidence (0–1) at the time this IC was first "
+            "created. Reflects how certain the model was that this concept is NOT "
+            "already captured by any existing IC in the codebook at extraction time. "
+            "Stable post-creation (codebook state is fixed). None for ICs created "
+            "before this field was introduced."
         ),
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -310,7 +311,18 @@ class ICCandidate(BaseModel):
             "Must satisfy: canonical_text[span_start:span_end] == quote_text exactly."
         ),
     )
-    confidence: float = Field(ge=0.0, le=1.0, description="Model confidence 0-1")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Novelty confidence (0–1): how certain the coder is that this concept is "
+            "NOT already captured by any existing IC in the current codebook. "
+            "1.0 = clearly new phenomenon, no existing IC comes close. "
+            "0.5 = uncertain, could plausibly overlap with an existing code. "
+            "0.0 = almost certainly a duplicate of an existing IC. "
+            "When the codebook is empty, default to 0.9."
+        ),
+    )
     sentiment: Optional[Sentiment] = Field(
         default=None,
         description="Sentiment of the verbatim quote: positive, negative, neutral, or mixed",
