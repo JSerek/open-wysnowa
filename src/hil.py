@@ -31,15 +31,17 @@ THIN_SEP = "-" * 70
 QUOTE_SEP = "  " + "─" * 66
 
 
-def _fixed_context(text: str, start: int, end: int) -> tuple[str, str]:
+def _fixed_context(text: str, start: int, end: int, window: int = CONTEXT_WINDOW) -> tuple[str, str]:
     """
-    Return up to CONTEXT_WINDOW characters immediately before and after [start:end].
+    Return up to `window` characters immediately before and after [start:end].
 
     Newlines and tabs are collapsed to single spaces so numbered lists,
     bullet points, and informal UGC don't bleed across display lines.
 
     Word-boundary snapping: if the window cuts mid-word, trim to the nearest
     space so the context reads cleanly.
+
+    Pass window=len(text) (or any large int) to show the full segment text.
 
     Returns (before, after) as strings, stripped. Either may be empty.
     """
@@ -50,19 +52,19 @@ def _fixed_context(text: str, start: int, end: int) -> tuple[str, str]:
 
     before = ""
     if start > 0:
-        raw_before = text[max(0, start - CONTEXT_WINDOW):start]
+        raw_before = text[max(0, start - window):start]
         collapsed = _collapse(raw_before)
         # If we couldn't show from position 0, snap to first word boundary
-        if start - CONTEXT_WINDOW > 0 and " " in collapsed:
+        if start - window > 0 and " " in collapsed:
             collapsed = collapsed[collapsed.index(" ") + 1:]
         before = collapsed
 
     after = ""
     if end < len(text):
-        raw_after = text[end:min(len(text), end + CONTEXT_WINDOW)]
+        raw_after = text[end:min(len(text), end + window)]
         collapsed = _collapse(raw_after)
         # If we couldn't show to end, snap to last word boundary
-        if end + CONTEXT_WINDOW < len(text) and " " in collapsed:
+        if end + window < len(text) and " " in collapsed:
             collapsed = collapsed[:collapsed.rindex(" ")]
         after = collapsed
 
@@ -99,6 +101,7 @@ def display_candidate_review(
     total_candidates: int,
     segment_id: str = "",
     ic_definitions: Optional[Dict[str, str]] = None,
+    context_window: int = CONTEXT_WINDOW,
 ) -> None:
     """
     Display a candidate for human review.
@@ -106,6 +109,10 @@ def display_candidate_review(
     Shows: name, definition, verbatim quote in context,
     top-K similar codes with truncated definitions,
     LLM recommendation + reasoning (truncated, expandable via ?).
+
+    context_window controls how many chars of surrounding text are shown.
+    Pass len(segment_text) to show the full segment. Analyst can expand
+    interactively via the [C] / [C N] command in prompt_decision.
     """
     ic_definitions = ic_definitions or {}
 
@@ -119,7 +126,7 @@ def display_candidate_review(
     print(f"  Definition: {candidate.definition}")
     print(f"  Confidence: {candidate.confidence:.0%}")
 
-    # Verbatim quote with ±CONTEXT_WINDOW char context + coverage
+    # Verbatim quote with surrounding context + coverage
     start = candidate.span_start
     end = candidate.span_end
     seg_len = len(segment_text)
@@ -127,15 +134,16 @@ def display_candidate_review(
     quote_len = end - start
     coverage_pct = quote_len / seg_len * 100 if seg_len > 0 else 0.0
     coverage_flag = "  ⚠ high" if coverage_pct > 70 else ""
-    before, after = _fixed_context(segment_text, start, end)
+    before, after = _fixed_context(segment_text, start, end, window=context_window)
 
-    ellipsis_before = "..." if (before and max(0, start - CONTEXT_WINDOW) > 0) else ""
-    ellipsis_after  = "..." if (after and end + CONTEXT_WINDOW < seg_len) else ""
+    ellipsis_before = "..." if (before and max(0, start - context_window) > 0) else ""
+    ellipsis_after  = "..." if (after and end + context_window < seg_len) else ""
+    window_label = "" if context_window == CONTEXT_WINDOW else f"  [ctx: {context_window} chars]"
 
     print(f"\n{QUOTE_SEP}")
     print(f"  {ellipsis_before}{before}[{quote}]{after}{ellipsis_after}")
     print(f"{QUOTE_SEP}")
-    print(f"  Span:     [{start}:{end}]")
+    print(f"  Span:     [{start}:{end}]{window_label}")
     print(f"  Coverage: {coverage_pct:.0f}%  ({quote_len} of {seg_len} chars){coverage_flag}")
 
     # Top-K similar codes with truncated definitions
@@ -191,13 +199,16 @@ def prompt_decision(
     ic_definitions: Optional[Dict[str, str]] = None,
     can_undo: bool = False,
     last_decision_desc: str = "",
+    current_context_window: int = CONTEXT_WINDOW,
 ) -> Tuple[str, Optional[int], Optional[str]]:
     """
     Prompt the human for a decision on a candidate.
 
-    Returns: (action, merge_target_index, notes)
-      - action: one of N, M, R, E, Q, U
+    Returns: (action, merge_target_index_or_context_window, notes)
+      - action: one of N, M, R, E, Q, U, C
       - merge_target_index: 1-based index into top_k (only for M actions)
+      - For C action: second element is the requested context window (int),
+        or None meaning "show full segment"
       - notes: optional free-text notes
 
     Validates input in a loop until a valid choice is given.
@@ -205,6 +216,7 @@ def prompt_decision(
     ic_definitions = ic_definitions or {}
     merge_targets = list(range(1, len(top_k) + 1)) if top_k else []
 
+    ctx_hint = "full" if current_context_window >= 10_000 else f"{current_context_window} chars"
     print(f"\n  Choose action:")
     print(f"    [N] Accept as NEW code")
     if merge_targets:
@@ -215,6 +227,7 @@ def prompt_decision(
     if can_undo:
         print(f"    [U] UNDO last decision  ({last_decision_desc})")
     print(f"    [?] Expand: full reasoning + IC definitions")
+    print(f"    [C] Expand context (currently: {ctx_hint})  e.g., C, C 300, C full")
     print(f"    [Q] QUIT batch review")
 
     while True:
@@ -238,6 +251,23 @@ def prompt_decision(
             if can_undo:
                 return "U", None, None
             print("  Nothing to undo.")
+
+        elif raw == "C" or raw.startswith("C "):
+            # Expand context window: C → full segment, C N → N chars
+            parts = raw.split()
+            if len(parts) == 1:
+                # bare C → full segment (large sentinel)
+                return "C", None, None
+            token = parts[1]
+            if token in ("FULL", "ALL"):
+                return "C", None, None
+            try:
+                n = int(token)
+                if n < 1:
+                    raise ValueError
+                return "C", n, None
+            except ValueError:
+                print(f"  Usage: C  (full segment)  or  C 300  (300 chars each side)")
 
         elif raw == "?":
             # Expand: show full reasoning + all top-K full definitions
@@ -281,7 +311,7 @@ def prompt_decision(
                 return "M", 1, notes
 
         else:
-            valid = "N, M, R, E, U, ?, Q" if merge_targets else "N, R, E, U, ?, Q"
+            valid = "N, M, R, E, U, C, ?, Q" if merge_targets else "N, R, E, U, C, ?, Q"
             print(f"  Invalid input. Valid choices: {valid}")
 
 

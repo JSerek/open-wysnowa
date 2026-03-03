@@ -30,6 +30,7 @@ from src.db import (
 )
 from src.embeddings import EmbeddingService, SimilarityResult
 from src.hil import (
+    CONTEXT_WINDOW,
     display_batch_header,
     display_batch_summary,
     display_candidate_review,
@@ -613,8 +614,8 @@ class Layer1Orchestrator:
         undo_state: Optional[Dict] = None,
     ) -> Tuple[str, Optional[int], Optional[str]]:
         """
-        HIL loop that handles Edit (re-display after edit) and Undo (reverse previous
-        decision, re-display current candidate).
+        HIL loop that handles Edit (re-display after edit), Undo (reverse previous
+        decision), and Context expand ([C] / [C N]) commands.
 
         undo_state is a mutable dict shared with the caller:
           {"ctx": undo_context_or_None, "deferred_quotes": list, "ic_defs": dict}
@@ -623,6 +624,7 @@ class Layer1Orchestrator:
         """
         current_candidate = candidate
         undo_state = undo_state or {}
+        context_window = CONTEXT_WINDOW   # starts at default, analyst can expand
 
         while True:
             ic_defs = undo_state.get("ic_defs", {})
@@ -633,7 +635,19 @@ class Layer1Orchestrator:
                 ic_definitions=ic_defs,
                 can_undo=undo_ctx is not None,
                 last_decision_desc=undo_ctx.get("description", "") if undo_ctx else "",
+                current_context_window=context_window,
             )
+
+            if action == "C":
+                # target_idx carries the requested window size (None → full segment)
+                context_window = target_idx if target_idx is not None else len(seg_text)
+                display_candidate_review(
+                    current_candidate, comp_output, top_k, seg_text,
+                    candidate_num, total_candidates,
+                    segment_id=seg_id, ic_definitions=ic_defs,
+                    context_window=context_window,
+                )
+                continue
 
             if action == "E":
                 current_candidate = prompt_edit_candidate(current_candidate)
@@ -641,6 +655,7 @@ class Layer1Orchestrator:
                     current_candidate, comp_output, top_k, seg_text,
                     candidate_num, total_candidates,
                     segment_id=seg_id, ic_definitions=ic_defs,
+                    context_window=context_window,
                 )
                 continue
 
@@ -652,6 +667,7 @@ class Layer1Orchestrator:
                     current_candidate, comp_output, top_k, seg_text,
                     candidate_num, total_candidates,
                     segment_id=seg_id, ic_definitions=ic_defs,
+                    context_window=context_window,
                 )
                 continue
 
