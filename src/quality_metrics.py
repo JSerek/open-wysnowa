@@ -1562,8 +1562,8 @@ class QualityMetricsEngine:
                 },
                 ...
             ],
-            "overall_mean": float,
-            "overall_max": float,
+            "overall_mean_pct": float,  # mean coverage as percentage (0–100)
+            "overall_max_pct": float,   # max coverage as percentage (0–100)
             "high_coverage_count": int,   # (ic, segment) pairs > 70%
             "total_ic_segment_pairs": int,
         }
@@ -1637,18 +1637,21 @@ class QualityMetricsEngine:
 
         per_ic.sort(key=lambda x: x["max_coverage"], reverse=True)
 
-        overall_mean = round(sum(all_coverages) / len(all_coverages), 4) if all_coverages else 0.0
-        overall_max = round(max(all_coverages), 4) if all_coverages else 0.0
+        overall_mean_frac = sum(all_coverages) / len(all_coverages) if all_coverages else 0.0
+        overall_max_frac = max(all_coverages) if all_coverages else 0.0
+        # Convert to percentage for storage — display and JSON are now on the same scale.
+        overall_mean = round(overall_mean_frac * 100, 2)
+        overall_max = round(overall_max_frac * 100, 2)
         high_coverage_count = sum(1 for c in all_coverages if c > 0.70)
 
         logger.info(
-            f"Quote coverage per IC: mean={overall_mean:.1%}, "
-            f"max={overall_max:.1%}, high-coverage pairs={high_coverage_count}"
+            f"Quote coverage per IC: mean={overall_mean:.1f}%, "
+            f"max={overall_max:.1f}%, high-coverage pairs={high_coverage_count}"
         )
         return {
             "per_ic": per_ic,
-            "overall_mean": overall_mean,
-            "overall_max": overall_max,
+            "overall_mean_pct": overall_mean,
+            "overall_max_pct": overall_max,
             "high_coverage_count": high_coverage_count,
             "total_ic_segment_pairs": len(all_coverages),
         }

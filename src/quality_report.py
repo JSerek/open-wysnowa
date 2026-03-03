@@ -110,12 +110,12 @@ def display_codebook_report(metrics: Dict[str, Any]) -> None:
     if per_ic_cov:
         print(f"\n  {SECTION_SEP}")
         print(f"  QUOTE COVERAGE PER IC")
-        overall_mean = qcov.get("overall_mean", 0.0)
-        overall_max  = qcov.get("overall_max", 0.0)
+        overall_mean = qcov.get("overall_mean_pct", qcov.get("overall_mean", 0.0))
+        overall_max  = qcov.get("overall_max_pct",  qcov.get("overall_max",  0.0))
         high_count   = qcov.get("high_coverage_count", 0)
         total_pairs  = qcov.get("total_ic_segment_pairs", 0)
         flag_summary = f"  ⚠ {high_count} pairs >70%" if high_count > 0 else ""
-        print(f"    overall: mean={overall_mean:.0%}  max={overall_max:.0%}  "
+        print(f"    overall: mean={overall_mean:.1f}%  max={overall_max:.1f}%  "
               f"pairs={total_pairs}{flag_summary}")
         # Show only ICs with at least one high-coverage segment, or top-5 by max
         flagged_ics = [ic for ic in per_ic_cov if ic["high_coverage_segments"] > 0]

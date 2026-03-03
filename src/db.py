@@ -500,12 +500,18 @@ class ThemeRepo:
         self.assign_ic(tic)
 
     def dissolve_theme(self, theme_id: str) -> int:
-        """Remove all IC-theme assignments. Theme record stays, ICs remain active."""
+        """Remove all IC-theme assignments AND delete the theme record.
+
+        ICs previously assigned to this theme remain active (not dropped).
+        Returns the number of IC-theme assignments that were removed.
+        """
         with self.db.connect() as conn:
             cursor = conn.execute(
                 "DELETE FROM theme_ics WHERE theme_id=?", (theme_id,)
             )
-            return cursor.rowcount
+            removed = cursor.rowcount
+            conn.execute("DELETE FROM themes WHERE id=?", (theme_id,))
+            return removed
 
 
 class DecisionLogRepo:
