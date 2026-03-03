@@ -60,6 +60,10 @@ Establish that the pipeline runs clean at different scales before testing intera
 - [ ] Layer 4 brief prints to terminal (even in no-HIL mode)
 - [ ] All 18 metrics computed (check Layer 3 output) ← not reached
 - [ ] Thematic structure has categories → themes → ICs → quotes hierarchy
+- [ ] **[NEW]** Coder reuse rate block appears in quality report — all four counters present (`coder_new_comp_new`, `coder_new_comp_merge`, `coder_new_comp_reject`, `coder_flagged_match`); none are all-zero for a 30-review run
+- [ ] **[NEW]** Coder flip rate note fires if `coder_new_comp_merge / total_coder_new > 0.40` — check whether warning appears
+- [ ] **[NEW]** Per-IC coverage block appears in quality report — shows mean/max coverage stats; flags ICs with >70% quote coverage
+- [ ] **[NEW]** Reasoning log file is co-located with DB (same directory, not in `runs/runs/`) ← double-path bug fixed in c88eda3, verify
 
 **Run log — 2026-03-01 (model: gemini_flash_lite via Google direct):**
 - Layer 0: 30 docs → 30 segments ✅
@@ -72,7 +76,8 @@ Establish that the pipeline runs clean at different scales before testing intera
 - Orphan pass: 26 orphans (12%), 18 assigned, 7 isolated, 3 new thin themes. ✅
 - Category synthesis: 8 categories. ✅
 - **Layer 3 crash:** `AttributeError: 'QualityMetricsEngine' object has no attribute '_persist_metric'` in `compute_coder_confidence()`. **Fixed in commit 00dbe2c — remove the erroneous call.**
-- Re-run after fix: pending.
+- IC refinement silently failing: `NameError` on `result.change_summary` → `refined_parsed.change_summary`. **Fixed in commit c88eda3.**
+- Re-run after fix: **pending** — this is the first test to run.
 
 ### 1.2 Medium run — 50 reviews
 ```bash
@@ -151,6 +156,57 @@ Test every human-in-the-loop checkpoint. Use 30 reviews to keep it manageable.
 - [ ] Saturation checkpoint: if ITS triggers saturation, verify the prompt asks whether to continue
 - [ ] Large batch: verify display is readable when 5+ candidates shown at once
 
+### 2.1a New HIL Display and Commands
+
+All commands added since the last plan revision. Run with the canonical_30 dataset in HIL mode.
+
+**Quote block display (visual):**
+- [ ] Quote block shows `────` separators above and below the quote line
+- [ ] Span appears on its own line: `Span:     [14:210]`
+- [ ] Coverage appears on its own line: `Coverage: 65%  (196 of 300 chars)`
+- [ ] `⚠ high` flag appears on Coverage line when quote covers >70% of segment
+- [ ] Segment ID shown in candidate header: `NEW IC CANDIDATE [1/12]  seg: seg_007`
+- [ ] Surrounding context reads cleanly — no numbered list bleed, no newline artifacts
+
+**Context expand `[C]`:**
+- [ ] Default menu shows `[C] Expand context (currently: 130 chars)  e.g., C, C 300, C full`
+- [ ] `C` alone → re-displays with full segment; ellipsis disappears; label changes to `(currently: full)`
+- [ ] `C 300` → re-displays with 300-char window; `[ctx: 300 chars]` label appears on Span line
+- [ ] `C full` → alias for bare `C`
+- [ ] Invalid input (e.g., `C abc`) → prints usage hint, loops back — no crash
+- [ ] Context window resets to 130 for the next candidate
+
+**Top-K definition snippets:**
+- [ ] Each top-K entry shows IC name, similarity score, and ≤85-char definition preview
+- [ ] Definition longer than 85 chars shows `…` at end
+- [ ] Newly created IC appearing in a subsequent top-K → no KeyError, definition entry gracefully absent or shown
+
+**Reasoning truncation and `[?]` expand:**
+- [ ] Reasoning longer than ~200 chars is truncated with `…` and `(type ? to expand)` hint
+- [ ] Short reasoning (<200 chars) shows in full, no hint
+- [ ] `?` → prints full reasoning, then full IC definitions for all top-K entries, then reprints action menu
+- [ ] `?` when no top-K entries → only reasoning prints, no error
+- [ ] After `?`, all normal commands (N, M, R, E, U, C, Q) still work
+
+**Session stats in batch header:**
+- [ ] Batch 1 header: codebook size, ITS (if available), candidate count — no session totals line (first batch)
+- [ ] Batch 2+ header: session totals line shows `+N new  ↔ N merged  ✗ N rejected`
+- [ ] Totals accumulate correctly across batches (verify against your own decisions)
+
+**Undo `[U]`:**
+- [ ] `[U]` not shown on first candidate of session (nothing to undo)
+- [ ] `[U]` shown after a decision is made, with description: `UNDO last decision  (NEW: combat_sluggish)`
+- [ ] Undo NEW: accept a new IC, then undo → IC absent from codebook, quote absent, `[U]` disappears
+- [ ] Undo MERGE: merge a candidate into existing IC, then undo → quote removed, IC quote count decrements, `[U]` disappears
+- [ ] Undo REJECT: reject a candidate, then undo → candidate re-presented for decision
+- [ ] Double-undo prevented: after one undo, `[U]` is gone for that candidate
+- [ ] After undo: current candidate re-displays fully (name, definition, quote block, top-K, reasoning)
+
+**Merge confirmation:**
+- [ ] `M1` → shows `→ Merging into: [1] <ic_name>` + `Confirm? [Y/N]:` before applying
+- [ ] `N` at confirm → loops back to action prompt; no merge recorded
+- [ ] `Y` at confirm → merge proceeds, quote count increases on target IC
+
 ### 2.2 Codebook Sign-Off (HIL Level 2)
 **Test actions:**
 - [ ] **View codebook:** scroll through all ICs, verify names/definitions/quote counts display correctly
@@ -210,6 +266,8 @@ Test every human-in-the-loop checkpoint. Use 30 reviews to keep it manageable.
 - [ ] Run with `category_merge_threshold: 0.90` — verify fewer/no category merges
 - [ ] Run with `split_min_ics: 5` (lower) — verify more themes flagged for splitting
 - [ ] Run with `distinctness_threshold: 0.80` (higher) — verify fewer pairs flagged
+- [ ] **[NEW]** Run with `reasoning_log_mode: failures_only` — verify log file is created but only contains entries for failed structured output calls (not every call); compare log line count to `full` mode run on same data
+- [ ] **[NEW]** Run with `reasoning_log_mode: full` (default) — verify every Coder and Comparator call writes a reasoning trace; confirm log is co-located with DB file
 
 ### 3.5 Save/load results
 - [ ] Verify `--save-results` produces valid JSON
@@ -226,6 +284,10 @@ This is the qualitative part — you reading the output as a researcher.
 - [ ] Read 10 random IC definitions — are they specific and grounded?
 - [ ] Check 5 singleton ICs — are they legitimate phenomena or noise?
 - [ ] Check 3 high-quote ICs (5+ quotes) — are all quotes actually about the same thing?
+- [ ] **[NEW]** Check confidence distribution in quality report: does mean confidence decrease over batches? (Early batches = sparse codebook = higher novelty confidence; late batches = dense codebook = lower novelty confidence expected)
+- [ ] **[NEW]** Pick 3 ICs with high confidence (≥0.85) — are they genuinely distinct, first-of-their-kind concepts?
+- [ ] **[NEW]** Pick 3 ICs with low confidence (≤0.5) — were they eventually merged with existing ICs, or accepted as distinct? Low confidence + accepted as NEW is a yellow flag (coder was uncertain but comparator agreed it was new)
+- [ ] **[NEW]** Check per-IC coverage report: any ICs with >70% quote coverage? If so, read those ICs — are they legitimately broad (e.g., a general sentiment IC) or do they look like bundled phenomena (Split IC candidate)?
 
 ### 4.2 Theme quality
 - [ ] Read each theme name + definition — does it accurately capture its ICs?
@@ -266,20 +328,22 @@ This is the qualitative part — you reading the output as a researcher.
 
 ## Known Issues from Previous Runs
 
-Issues identified from the random-sample STAB_30/50/100 runs (pre-canonical dataset):
+Issues identified from the random-sample STAB_30/50/100 runs (pre-canonical dataset) and canon_30 run.
 
 | # | Area | Issue | Severity | Status |
 |---|------|-------|----------|--------|
-| 1 | Layer 2 | Refinement too passive — 0 dissolutions, near-zero merges despite 22-38 overlapping pairs | High | To fix |
-| 2 | Layer 1 | Low convergence confidence (39-45%) — codebook not stabilizing, excessive new IC creation | High | To fix |
-| 3 | Layer 2 | Coherence degrades with scale (0.61→0.50) — no coherence-guided splitting exists | Medium | Fixed — S4 split heuristic implemented |
-| 4 | Coverage | 17% unassigned ICs at 100 segments — mix of threshold issues and missing themes | Medium | To investigate |
-| 5 | Layer 1 | IC reuse prompt too weak — coder creates duplicates that merge step cleans up | Medium | To fix |
+| 1 | Layer 2 | Refinement too passive — 0 dissolutions, near-zero merges despite 22-38 overlapping pairs | High | Open |
+| 2 | Layer 1 | Low convergence confidence (39-45%) — codebook not stabilizing, excessive new IC creation | High | Open — coder reuse rate diagnostic added (commit 9e3b0b6) to make this observable; root cause unaddressed |
+| 3 | Layer 2 | Coherence degrades with scale (0.61→0.50) — no coherence-guided splitting | Medium | **Fixed** — S4 split heuristic implemented |
+| 4 | Coverage | 17% unassigned ICs at 100 segments — mix of threshold issues and missing themes | Medium | Open |
+| 5 | Layer 1 | IC reuse prompt too weak — coder creates duplicates that merge step cleans up | Medium | Open — diagnostic added (see #2); root cause unaddressed |
 | 6 | Model | Gemini Flash Lite too weak for batch coder prompt | Medium | **Confirmed** — canon_30 run showed float-ordinal ID leakage and spaces in IC names. Switch to gemini_flash or Haiku before further runs. |
 | 7 | Layer 3 | `compute_coder_confidence()` called non-existent `_persist_metric()` method | High | **Fixed** — commit 00dbe2c (2026-03-01) |
-| 8 | Layer 1 | Coder sends `existing_code_match` as float ordinal (e.g. 33.0) instead of IC ID string — all skipped silently | Medium | To fix — add ID format validation / normalization in orchestrator |
-| 9 | Layer 1 | Coder creates IC names with spaces instead of underscores — causes theme assignment miss | Low | To fix — add `name.strip().replace(" ", "_")` normalization on IC creation |
-| 10 | Layer 1 | 82.5% singleton ratio in canon_30 — coder over-splits concepts across reviews | High | To investigate — likely model + prompt issue; expect to improve with stronger model |
+| 8 | Layer 1 | Coder sends `existing_code_match` as float ordinal (e.g. 33.0) instead of IC ID string — silently skipped | Medium | Open — targeted retry added for *missing* segments (commit 9e3b0b6) but float ordinal normalization not yet implemented |
+| 9 | Layer 1 | Coder creates IC names with spaces instead of underscores — causes theme assignment miss | Low | Open — `name.replace(" ", "_")` normalization not yet added to IC creation path |
+| 10 | Layer 1 | 82.5% singleton ratio in canon_30 — coder over-splits concepts across reviews | High | Open — likely model issue; retest with gemini_flash or Haiku |
+| 11 | Layer 1 | IC refinement NameError: `result.change_summary` → `refined_parsed.change_summary` — all IC refinement passes silently failed | High | **Fixed** — commit c88eda3 (2026-03-01) |
+| 12 | Pipeline | Reasoning log written to `runs/runs/` (double path) when `--db` points to `runs/foo.db` | Low | **Fixed** — commit c88eda3 (2026-03-01) |
 
 ---
 
@@ -297,5 +361,6 @@ The stabilization phase is complete when:
 
 *Created: 2026-02-23*
 *Updated: 2026-02-25 — canonical dataset, known issues table, model comparison phase*
-*Updated: 2026-03-01 — added Model Configuration section; added canon_30 run log (partial — Layer 3 crash fixed); updated Known Issues with issues #7–10 from canon_30 analysis*
+*Updated: 2026-03-01 — Model Configuration section; canon_30 run log (partial); Known Issues #7–10*
+*Updated: 2026-03-03 — Added [NEW] checks for: coder reuse rate diagnostic, per-IC coverage metric, reasoning log path. Added Phase 2.1a (all new HIL commands: quote display separators, Span/Coverage lines, ⚠ flag, segment ID, C/C N context expand, top-K definition snippets, ? reasoning expand, session stats, U undo, merge confirmation). Added Phase 3.4 reasoning_log_mode config tests. Added Phase 4.1 novelty confidence quality checks. Known Issues: updated statuses #2/#5/#8; added #11 (IC refinement NameError, fixed) and #12 (double runs/ path, fixed).*
 *Use after: Layer 4 implementation complete*
