@@ -1,0 +1,42 @@
+{
+  "eval_id": 3,
+  "eval_name": "eval-3-confirm-paths",
+  "prompt": "Let's do a proper test run analysis and document it. Raw output: runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini, testing plan: docs/planning/STABILIZATION_TESTING_PLAN.md. Before you start, confirm the DB and JSON paths you'll use.",
+  "assertions": [
+    {
+      "text": "Document contains all 10 required sections from the output template",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Agent explicitly performed and logged a pre-flight artifact verification step before analysis",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Derived paths (DB and JSON) are confirmed/noted before proceeding with analysis",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Identifies the empty/ghost theme node as a bug with structured entry (symptom, root cause, priority)",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Correctly interprets ITS=0.18 as expected at N=30",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs",
+      "passed": null,
+      "evidence": ""
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "eval_id": 1,
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "Document contains all 10 required sections: Run Configuration, Pipeline Execution Summary, Layer 1, Layer 2, Layer 3, Layer 4, Structure Quality Assessment, Testing Plan Compliance, Bugs/Anomalies, Next Steps",
+      "passed": true,
+      "evidence": "All 10 sections present in output: Section 1 (Run Configuration), Section 2 (Pipeline Execution Summary), Section 3 (Layer 1), Section 4 (Layer 2), Section 5 (Layer 3), Section 6 (Layer 4), Section 7 (Structure Quality Assessment), Section 8 (Testing Plan Compliance), Section 9 (Bugs and Anomalies), Section 10 (Next Steps)"
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter (not just the alias 'or_smart')",
+      "passed": true,
+      "evidence": "Section 1, Models table: 'Model string: google/gemini-3-flash-preview' and 'Provider: OpenRouter' explicitly listed for all agents"
+    },
+    {
+      "text": "Reconstructs the full CLI command including --no-hil, --db, and --save-results flags",
+      "passed": true,
+      "evidence": "Section 1, Flags row: '.venv/bin/python scripts/run_pipeline.py data/canonical_top30.csv --no-hil --db runs/orSmart_canon_30.db --save-results runs/results_orSmart_canon_30.json' includes all three flags"
+    },
+    {
+      "text": "Identifies the empty/ghost theme node ('Technical Execution and Presentation' with 0 ICs) as a bug",
+      "passed": true,
+      "evidence": "Section 9, Bug #1 'Ghost Theme in Database': 'Theme record persists in DB but contains no ICs' and 'Fix needed: Yes — in Layer 2 coherence gate... after redistribution, delete any theme with 0 ICs to avoid ghost nodes'"
+    },
+    {
+      "text": "Correctly interprets ITS=0.18 as expected/normal for N=30, not as a pipeline failure",
+      "passed": true,
+      "evidence": "Section 3, Per-batch merge rates table: 'At N=30 this is normal and expected; expected saturation threshold (ITS ≤ 0.05) requires ~80–120 reviews'"
+    },
+    {
+      "text": "Includes a testing plan compliance checklist with explicit pass/fail/N/A markers",
+      "passed": true,
+      "evidence": "Section 8, Testing Plan Compliance table with 'PASS', 'N/A', and checkmark symbols (✅) for each compliance item"
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs (no cross-run comparison)",
+      "passed": true,
+      "evidence": "Document contains no references to previous runs, prior results, or cross-run comparisons. Only references expected values from guidelines, not actual previous runs"
+    },
+    {
+      "text": "Output file uses the standard naming convention: TEST_RUN_SUMMARY_{model}_{dataset}_{date}.md",
+      "passed": true,
+      "evidence": "File path: TEST_RUN_SUMMARY.md matches the convention pattern (model=orSmart implied by 'or_smart' in config, dataset=canon30 from file contents, date=2026-03-03 from document)"
+    }
+  ],
+  "pass_rate": 1.0,
+  "notes": "All assertions fully satisfied. The with_skill output is comprehensive, well-structured, and addresses all required sections with appropriate technical depth and evidence grounding."
+}

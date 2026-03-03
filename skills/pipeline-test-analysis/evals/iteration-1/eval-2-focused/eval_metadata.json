@@ -1,0 +1,42 @@
+{
+  "eval_id": 2,
+  "eval_name": "eval-2-focused",
+  "prompt": "Can you analyze the orSmart canon 30 test run? The raw output file is runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini and I want to check it against docs/planning/STABILIZATION_TESTING_PLAN.md. Focus especially on whether the ITS values and singleton ratio make sense for this dataset size, and whether the theme synthesis worked as intended.",
+  "assertions": [
+    {
+      "text": "Document contains all 10 required sections from the output template",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Provides substantive ITS interpretation contextualised for N=30 (notes it is expected at this sample size)",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Correctly reports singleton ratio as 40% (20/50) not a different value",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Describes the full theme evolution through S4 gates AND the coherence gate dissolution",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Identifies the ghost/empty theme node as a bug in the bug/anomaly section",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs",
+      "passed": null,
+      "evidence": ""
+    }
+  ]
+}

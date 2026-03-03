@@ -1,0 +1,41 @@
+{
+  "skill_name": "pipeline-test-analysis",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just finished a no-HIL test run on the canonical 30 reviews. The raw output is at runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini and the testing plan is at docs/planning/STABILIZATION_TESTING_PLAN.md. Analyze the run and write up the test result summary document.",
+      "expected_output": "A complete TEST_RUN_SUMMARY markdown document saved to docs/testing/, covering all 10 sections from the template: run config with exact model strings and CLI command, pipeline integrity, L1 stats with per-batch ITS and merge rates, L2 theme evolution including the coherence gate dissolution, L3 metrics with RAG status, L4 brief assessment, structure quality spot-checks, testing plan checklist, bug log (should identify the empty-theme ghost node and quote coverage scale bugs), and next steps.",
+      "files": [
+        "runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini",
+        "runs/results_orSmart_canon_30.json",
+        "runs/orSmart_canon_30.db",
+        "eqd_config.yaml",
+        "docs/planning/STABILIZATION_TESTING_PLAN.md"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Can you analyze the orSmart canon 30 test run? The raw output file is runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini and I want to check it against docs/planning/STABILIZATION_TESTING_PLAN.md. Focus especially on whether the ITS values and singleton ratio make sense for this dataset size, and whether the theme synthesis worked as intended.",
+      "expected_output": "Should first ask for confirmation of derived artifact paths (DB, JSON). Then produce a full analysis with particular depth on ITS interpretation (contextualised for N=30 — not a failure) and singleton ratio trajectory, plus a clear account of the theme evolution through S4 gates and the coherence gate dissolution including the empty theme ghost node bug.",
+      "files": [
+        "runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini",
+        "runs/results_orSmart_canon_30.json",
+        "runs/orSmart_canon_30.db",
+        "eqd_config.yaml",
+        "docs/planning/STABILIZATION_TESTING_PLAN.md"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Let's do a proper test run analysis and document it. Raw output: runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini, testing plan: docs/planning/STABILIZATION_TESTING_PLAN.md. Before you start, confirm the DB and JSON paths you'll use.",
+      "expected_output": "Should confirm the derived paths (orSmart_canon_30.db and results_orSmart_canon_30.json) before proceeding. Then complete the full analysis. Output document should use the standard naming convention and include all sections. Bug log should include at minimum: empty theme ghost node (P1), quote coverage scale (P3). Should NOT compare to any previous run results.",
+      "files": [
+        "runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini",
+        "runs/results_orSmart_canon_30.json",
+        "runs/orSmart_canon_30.db",
+        "eqd_config.yaml",
+        "docs/planning/STABILIZATION_TESTING_PLAN.md"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "eval_id": 3,
+  "configuration": "with_skill",
+  "expectations": [
+    {
+      "text": "Document contains all 10 required sections from the output template",
+      "passed": true,
+      "evidence": "All 10 sections present: Run Configuration (1), Pipeline Execution Summary (2), Layer 1 (3), Layer 2 (4), Layer 3 (5), Layer 4 (6), Structure Quality Assessment (7), Testing Plan Compliance (8), Bugs and Anomalies (9), Next Steps (10)"
+    },
+    {
+      "text": "Agent explicitly performed and logged a pre-flight artifact verification step before analysis",
+      "passed": true,
+      "evidence": "Section 10, final paragraph states: 'Appendix: Pre-Flight Artifact Verification' followed by explicit confirmation of all required artifacts including DB, JSON, raw output, config, and testing plan paths with file sizes and validation status"
+    },
+    {
+      "text": "Derived paths (DB and JSON) are confirmed/noted before proceeding with analysis",
+      "passed": true,
+      "evidence": "Appendix explicitly lists: 'Derived DB path: runs/orSmart_canon_30.db — 6.4 MB SQLite 3.x database' and 'Derived JSON path: runs/results_orSmart_canon_30.json — Valid JSON with 8 top-level keys' with 'Confirmed derived paths with user' checkmark"
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter",
+      "passed": true,
+      "evidence": "Section 1, Models table: Agent columns show 'Model string: google/gemini-3-flash-preview' and 'Provider: OpenRouter (`or_smart`)' for all agents"
+    },
+    {
+      "text": "Identifies the empty/ghost theme node as a bug with structured entry (symptom, root cause, priority)",
+      "passed": true,
+      "evidence": "Section 9, Bug #1 'Ghost Theme in Database' with structured format: Severity=High, Symptom (detailed), Affected components, Root cause (explained), Fix needed (yes), Priority (P1) with rationale"
+    },
+    {
+      "text": "Correctly interprets ITS=0.18 as expected at N=30",
+      "passed": true,
+      "evidence": "Section 3, Per-batch merge rates table: 'ITS trajectory': Declining from Batch 1 → Batch 3 (descending from saturated codebook formation to late-batch plateau). Final ITS = 0.10 (18% of final codebook emerged in last batch). At N=30, this is normal and expected'"
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs",
+      "passed": true,
+      "evidence": "Document contains no cross-run comparisons or references to previous runs. All metric interpretations are against guidelines and thresholds only"
+    }
+  ],
+  "pass_rate": 1.0,
+  "notes": "All assertions fully satisfied. The with_skill output for eval-3 includes explicit pre-flight verification in appendix, confirms derived paths, and provides comprehensive structured bug reporting with all required severity/root cause details."
+}

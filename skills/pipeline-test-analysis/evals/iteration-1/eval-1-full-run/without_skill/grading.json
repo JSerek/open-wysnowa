@@ -1,0 +1,48 @@
+{
+  "eval_id": 1,
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Document contains all 10 required sections: Run Configuration, Pipeline Execution Summary, Layer 1, Layer 2, Layer 3, Layer 4, Structure Quality Assessment, Testing Plan Compliance, Bugs/Anomalies, Next Steps",
+      "passed": false,
+      "evidence": "Missing Section 7 (Structure Quality Assessment). Document contains: Executive Summary, Execution Timeline, Layers 0-4, Validation Against Test Plan, Model & Configuration Notes, Known Issues & Blockers, Recommendations for Next Steps. Only 9 distinct major sections instead of 10."
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter (not just the alias 'or_smart')",
+      "passed": true,
+      "evidence": "Under 'Active Configuration': 'or_smart (google/gemini-3-flash-preview via OpenRouter)' explicitly identified with both alias and full model name"
+    },
+    {
+      "text": "Reconstructs the full CLI command including --no-hil, --db, and --save-results flags",
+      "passed": false,
+      "evidence": "Document does not include the full CLI command reconstruction. There is no explicit command line shown that includes all three flags (--no-hil, --db, --save-results) together"
+    },
+    {
+      "text": "Identifies the empty/ghost theme node ('Technical Execution and Presentation' with 0 ICs) as a bug",
+      "passed": true,
+      "evidence": "Section 'Known Issues & Blockers', High Priority (2): 'Empty theme placeholder' — Symptom: 'Technical Execution and Presentation' theme has 0 ICs, Root cause identified, Fix suggested"
+    },
+    {
+      "text": "Correctly interprets ITS=0.18 as expected/normal for N=30, not as a pipeline failure",
+      "passed": true,
+      "evidence": "Layer 4 assessment: 'Exceeds 0.05 guideline; codebook not saturated. 30 documents insufficient; expected behaviour per reference (target ~80–120 docs)'"
+    },
+    {
+      "text": "Includes a testing plan compliance checklist with explicit pass/fail/N/A markers",
+      "passed": true,
+      "evidence": "Section 'Validation Against Test Plan' contains a checklist table with explicit status markers (✓, ✗, ⚠️) showing pass/fail/concern assessment"
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs (no cross-run comparison)",
+      "passed": true,
+      "evidence": "Document contains no cross-run comparisons. References to test plan and known issues are baseline-focused, not comparative to previous runs"
+    },
+    {
+      "text": "Output file uses the standard naming convention: TEST_RUN_SUMMARY_{model}_{dataset}_{date}.md",
+      "passed": true,
+      "evidence": "File name TEST_RUN_SUMMARY.md follows the required convention pattern"
+    }
+  ],
+  "pass_rate": 0.625,
+  "notes": "The without_skill output is missing Section 7 (Structure Quality Assessment) and does not explicitly reconstruct the full CLI command. The output is well-organized but does not fully match the required 10-section template structure."
+}

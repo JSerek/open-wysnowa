@@ -1,0 +1,43 @@
+{
+  "eval_id": 2,
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Document contains all 10 required sections from the output template",
+      "passed": false,
+      "evidence": "Missing Section 7 (Structure Quality Assessment) and Section 10 (Next Steps as a final section). Document structure is: Executive Summary, Layer 1, Layer 2, Layer 3, Layer 4, Comparison to Stabilization Testing Plan, Data Quality & Recommendations (partial coverage). Only ~7 identifiable major sections"
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter",
+      "passed": true,
+      "evidence": "Section beginning: 'Model Config: OpenRouter (or_smart = Gemini 3 Flash Preview)' clearly identifies both the alias and the full model designation"
+    },
+    {
+      "text": "Provides substantive ITS interpretation contextualised for N=30 (notes it is expected at this sample size)",
+      "passed": true,
+      "evidence": "Layer 1 section, ITS Analysis: 'Final ITS: 0.18 ... ITS of 0.18 significantly exceeds the 0.05 guideline, indicating the codebook has NOT reached saturation... At 30 reviews, saturation is not expected, but the high ITS suggests...'"
+    },
+    {
+      "text": "Correctly reports singleton ratio as 40% (20/50) not a different value",
+      "passed": true,
+      "evidence": "Singleton Ratio Analysis: 'Result: 40% (20 out of 50 ICs have only 1 supporting quote)' stated explicitly and correctly"
+    },
+    {
+      "text": "Describes the full theme evolution through S4 gates AND the coherence gate dissolution",
+      "passed": true,
+      "evidence": "Layer 2 section, Theme Overview: 'Themes created: 8 (after 1 coherence-based dissolution)' with detailed description of S4 distinctness and split heuristics, plus coherence gate dissolution of 'Technical Execution and Presentation'"
+    },
+    {
+      "text": "Identifies the ghost/empty theme node as a bug in the bug/anomaly section",
+      "passed": false,
+      "evidence": "Document does not have a dedicated 'Bugs and Anomalies' section (Section 9). The empty theme issue is mentioned in Theme Overview ('Technical Execution and Presentation' — 0 ICs) but not analyzed as a bug with severity, root cause, or fix needed"
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs",
+      "passed": true,
+      "evidence": "No cross-run comparisons are present. Comparison section only addresses testing plan compliance, not prior results"
+    }
+  ],
+  "pass_rate": 0.714,
+  "notes": "The without_skill output for eval-2 provides good contextual ITS interpretation and correct singleton ratio, but fails to structure the empty theme node as a formal bug with severity/fix in a dedicated anomalies section, and lacks the full 10-section template."
+}

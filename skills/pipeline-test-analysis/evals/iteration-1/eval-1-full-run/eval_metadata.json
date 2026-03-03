@@ -1,0 +1,47 @@
+{
+  "eval_id": 1,
+  "eval_name": "eval-1-full-run",
+  "prompt": "I just finished a no-HIL test run on the canonical 30 reviews. The raw output is at runs/raw_outputs/raw_output_test_03_03_orSmart_canon_30.ini and the testing plan is at docs/planning/STABILIZATION_TESTING_PLAN.md. Analyze the run and write up the test result summary document.",
+  "assertions": [
+    {
+      "text": "Document contains all 10 required sections: Run Configuration, Pipeline Execution Summary, Layer 1, Layer 2, Layer 3, Layer 4, Structure Quality Assessment, Testing Plan Compliance, Bugs/Anomalies, Next Steps",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter (not just the alias 'or_smart')",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Reconstructs the full CLI command including --no-hil, --db, and --save-results flags",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Identifies the empty/ghost theme node ('Technical Execution and Presentation' with 0 ICs) as a bug",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Correctly interprets ITS=0.18 as expected/normal for N=30, not as a pipeline failure",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Includes a testing plan compliance checklist with explicit pass/fail/N/A markers",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs (no cross-run comparison)",
+      "passed": null,
+      "evidence": ""
+    },
+    {
+      "text": "Output file uses the standard naming convention: TEST_RUN_SUMMARY_{model}_{dataset}_{date}.md",
+      "passed": null,
+      "evidence": ""
+    }
+  ]
+}

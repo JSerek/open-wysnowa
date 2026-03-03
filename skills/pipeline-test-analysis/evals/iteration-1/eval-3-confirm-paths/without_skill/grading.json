@@ -1,0 +1,43 @@
+{
+  "eval_id": 3,
+  "configuration": "without_skill",
+  "expectations": [
+    {
+      "text": "Document contains all 10 required sections from the output template",
+      "passed": false,
+      "evidence": "Missing Section 7 (Structure Quality Assessment) and does not have a distinct Section 10 (Next Steps). Document structure includes: Path Confirmation, Execution Summary, Layers 1-4, Comparison to Testing Plan, Known Issues Assessment, Recommendations, Run Metadata, Conclusion. Approximately 8 sections instead of 10"
+    },
+    {
+      "text": "Agent explicitly performed and logged a pre-flight artifact verification step before analysis",
+      "passed": true,
+      "evidence": "Document begins with 'Path Confirmation' section confirming all artifact paths (Database, Results JSON, Raw Output Log, Testing Plan, Config File) with existence status (✅ Exists) and file sizes"
+    },
+    {
+      "text": "Derived paths (DB and JSON) are confirmed/noted before proceeding with analysis",
+      "passed": true,
+      "evidence": "Path Confirmation section explicitly lists: Database `/sessions/relaxed-loving-bell/mnt/eqa_ai/runs/orSmart_canon_30.db` ✅ Exists (6.4 MB) and Results JSON `/sessions/relaxed-loving-bell/mnt/eqa_ai/runs/results_orSmart_canon_30.json` ✅ Exists (162 KB)"
+    },
+    {
+      "text": "Correctly identifies the model as google/gemini-3-flash-preview via OpenRouter",
+      "passed": true,
+      "evidence": "Under 'Model Config': 'OpenRouter (`or_smart` = google/gemini-3-flash-preview with reasoning)' clearly identifies both alias and full model name"
+    },
+    {
+      "text": "Identifies the empty/ghost theme node as a bug with structured entry (symptom, root cause, priority)",
+      "passed": false,
+      "evidence": "Document does not have a dedicated 'Bugs and Anomalies' section. The empty theme issue is mentioned in Layer 2 (Theme Breakdown shows 'Technical Execution and Presentation (0 ICs, 0 quotes) — empty theme') but lacks structured bug reporting format with symptom, root cause, and priority"
+    },
+    {
+      "text": "Correctly interprets ITS=0.18 as expected at N=30",
+      "passed": true,
+      "evidence": "Layer 1 section, Codebook Maturity: 'ITS (Final): 0.18 (18%) — Exceeds saturation threshold. 18% of batch 3 were entirely new types. Analysis has NOT reached conceptual saturation. 30 documents insufficient for stable codebook.'"
+    },
+    {
+      "text": "Does NOT compare results to any previous test runs",
+      "passed": true,
+      "evidence": "No cross-run comparisons present. All assessments reference testing plan guidelines and thresholds, not prior runs"
+    }
+  ],
+  "pass_rate": 0.714,
+  "notes": "The without_skill output for eval-3 confirms artifact paths upfront and correctly interprets ITS, but lacks the full 10-section template and does not structure the empty theme as a formal bug with severity/root cause in a dedicated anomalies section."
+}
