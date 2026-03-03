@@ -99,19 +99,32 @@ Track codebook state across pipeline runs for longitudinal analysis. When the pr
 - `codebook_versions` table: `id`, `name` (e.g., "v1_launch_reviews"), `created_at`, `ic_count`, `notes`
 - `version_id` foreign key on `initial_codes` (`introduced_in_version`)
 - `last_seen_version` on `initial_codes` (tracks when an IC was last supported by evidence)
+- `evidence_source` column on `verbatim_quotes`: enum `initial_pass | saturation_pass`. Tags which pipeline pass produced each piece of evidence. Allows Saturation reports to isolate delta contributions and lets analysts audit whether saturation-sourced evidence is qualitatively different from initial-pass evidence.
 - Run mode stored in config as a session parameter, not a permanent setting
 - **Immutability fix (bundle here):** `InitialCodeRepo.update_definition()` currently mutates IC definitions in place, violating DESIGN_PRINCIPLES.md #1 and #5. The correct fix is append-only IC rows with a `version: int` column and queries that always pull `latest active version`. This requires the versioning schema above to be meaningful — implement as part of this sprint, not standalone.
 
-### Three analysis modes (explicit upfront selection)
+### Four analysis modes (explicit upfront selection)
 The analyst selects mode at pipeline start. The system enforces availability based on DB state.
 
 **Discovery mode** — fully open codebook (current behaviour). Available always. Used for initial exploration and codebook building. After completion, analyst can save a codebook checkpoint (named + timestamped freeze).
+
+**Saturation mode** — deepening pass on already-processed data. Available only after Discovery has been run on the current dataset and verbatim quote span data exists. Intent: maximise evidence density within a dataset before advancing to Validation or Evolution. Does NOT create a new codebook version — it completes the current one.
+
+*How it works:* Computes uncovered character spans per segment (positions not within any existing `span_start:span_end` interval, using the interval-union algorithm from quote coverage). Each contiguous gap above a minimum length threshold becomes a focused mini-segment (`{segment_id}_gap_{n}`) with a configurable context window on each side. These flow through the standard Coder → Comparator → HIL pipeline unchanged. All quotes produced are tagged `evidence_source = 'saturation_pass'`.
+
+*Codebook versioning:* No new version is minted. New ICs created during a saturation pass are part of the same analytical effort as Discovery — they were simply missed on the first pass. The IC gains `introduced_in_version = current_version` and the quote is tagged `saturation_pass`. This is auditable but not a version boundary.
+
+*ITS interpretation:* Saturation ITS is expected to be lower than Discovery ITS by design — the whole point is that less is left to find. A dedicated saturation ITS floor (separate from, and lower than, the Discovery ITS threshold) determines when the pipeline declares practical saturation. Can be run iteratively until ITS drops below the floor.
+
+*Coverage threshold:* Configurable — run saturation on all segments below X% quote coverage (default: 100%, i.e., all segments with any gap), or on analyst-selected segments. Quote coverage metric from `quality_metrics.py` drives this selection.
+
+*Saturation report:* Shows per-segment coverage delta (before → after), new quotes added, new ICs created (if any), and segments that remain below coverage threshold after the pass.
 
 **Validation mode** — codebook is locked, no new ICs. Only available when a named checkpoint exists. This is **deductive coding / content analysis / classification** — applying an existing framework to new data. Major pipeline simplification: skips IC triage, IC refinement, comparator agent, codebook sign-off. Coder agent replaced by a dedicated **ClassifierAgent** (see below). Key outputs: coverage ratio (% of segments matched), gap analysis (unmatched segments), per-IC frequency shifts.
 
 **Evolution mode** — core codebook is locked, but new ICs can emerge in a separate "emerging" holding area. Only available when a named checkpoint exists. At sign-off, analyst sees: "Your codebook had 38 ICs. This run encountered 5 segments that didn't fit any existing code. Here are the proposed new ICs — promote each to your core codebook or dismiss."
 
-**Guardrails:** If DB is empty or no checkpoint exists → only Discovery is available. Validation and Evolution are greyed out with explanation.
+**Guardrails:** If DB is empty or no checkpoint exists → only Discovery is available. Saturation requires Discovery to have been run on the current dataset with span data present. Validation and Evolution require a named checkpoint.
 
 ### ClassifierAgent (Validation mode)
 A dedicated agent separate from the Coder — the classification task is fundamentally different from extraction. The Coder generates ICs from open-ended reading; the ClassifierAgent assigns segments to existing ICs from a fixed codebook.
@@ -123,7 +136,14 @@ A dedicated agent separate from the Coder — the classification task is fundame
 **Processing:** One segment at a time. Output: list of matched IC IDs with confidence scores.
 
 ### Session-start UX
-Pipeline opens with mode selection. If a checkpoint exists: "You have codebook 'v1_launch_reviews' from [date] (38 ICs). Select mode: Discovery (fresh start) / Validation (classify new data) / Evolution (extend codebook)." If no checkpoint: "No codebook checkpoint found. Starting in Discovery mode."
+Pipeline opens with mode selection. Available options depend on DB state:
+
+- **No prior run:** "No codebook found. Starting in Discovery mode." (only option)
+- **Discovery completed, no checkpoint:** "Discovery run found (38 ICs, dataset: launch_reviews). Select mode: [D] Discovery (fresh start) / [S] Saturation (deepen current dataset)."
+- **Checkpoint exists, no prior Discovery on current dataset:** "Codebook checkpoint 'v1_launch_reviews' (38 ICs, [date]). Select mode: [D] Discovery / [V] Validation / [E] Evolution."
+- **Checkpoint exists + Discovery on current dataset:** All four modes available. Saturation labelled with current mean coverage: "[S] Saturation (mean coverage: 61% — 12 segments below threshold)."
+
+Saturation entry shows coverage stats inline so the analyst can make an informed decision about whether another pass is worth running before checkpointing.
 
 ### Longitudinal analytics (version diff report)
 Compare codebook v1 vs v2 across runs:
