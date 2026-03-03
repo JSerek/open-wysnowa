@@ -12,36 +12,63 @@ Codebook Versioning transforms EQD-AI from a single-run analysis tool into a mul
 The analyst can checkpoint a codebook after Discovery, then apply it to new data (Validation),
 extend it (Evolution), or re-run Discovery for reliability testing.
 
+Four analysis modes form a natural workflow sequence:
+
+```
+Discovery  →  Saturation (optional, iterative)  →  checkpoint  →  Validation / Evolution
+```
+
+- **Discovery** — build the initial codebook from open-ended extraction
+- **Saturation** — deepen evidence density on the same dataset before checkpointing
+- **Validation** — classify new data against a locked codebook (deductive)
+- **Evolution** — extend a locked codebook when new data produces new phenomena
+
 ---
 
-## 2. Three Analysis Modes
+## 2. Four Analysis Modes
 
 ### 2.1 Mode Selection (Pipeline Entry Point)
 
-The analyst selects mode at pipeline start via CLI flag (`--mode discovery|validation|evolution`)
+The analyst selects mode at pipeline start via CLI flag (`--mode discovery|saturation|validation|evolution`)
 or interactive prompt. The system enforces availability based on DB state.
 
 **Guardrails:**
 - DB empty / no checkpoint → only Discovery available
-- Checkpoint exists → all three modes available
+- Discovery completed on current dataset + span data present → Discovery and Saturation available
+- Checkpoint exists (no prior Discovery on current dataset) → Discovery, Validation, Evolution available
+- Checkpoint exists + Discovery on current dataset → all four modes available
 - CLI flag `--mode validation` with no checkpoint → error with explanation
 
-**Session-start UX (HIL enabled):**
+**Session-start UX — no prior run:**
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Codebook: 'v1_launch_reviews' (38 ICs, 2026-02-20)     │
-│                                                          │
-│ Select analysis mode:                                    │
-│   [1] Discovery   — fresh codebook, open exploration     │
-│   [2] Validation  — classify data against locked codebook│
-│   [3] Evolution   — locked codebook + emerging ICs       │
-└─────────────────────────────────────────────────────────┘
+No codebook found. Starting in Discovery mode.
 ```
 
-**Session-start UX (no checkpoint):**
+**Session-start UX — Discovery completed, no checkpoint yet:**
 ```
-No codebook checkpoint found. Starting in Discovery mode.
+┌──────────────────────────────────────────────────────────────┐
+│ Discovery run found — 38 ICs  |  dataset: launch_reviews     │
+│ Mean quote coverage: 61%  (12 segments below threshold)      │
+│                                                              │
+│ Select analysis mode:                                        │
+│   [D] Discovery   — fresh start, discard current codebook   │
+│   [S] Saturation  — deepen coverage on this dataset         │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+**Session-start UX — checkpoint exists:**
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Codebook: 'v1_launch_reviews'  (38 ICs, 2026-02-20)         │
+│                                                              │
+│ Select analysis mode:                                        │
+│   [D] Discovery   — fresh codebook, open exploration        │
+│   [S] Saturation  — deepen coverage on current dataset      │
+│   [V] Validation  — classify new data, codebook locked      │
+│   [E] Evolution   — locked codebook + emerging ICs          │
+└──────────────────────────────────────────────────────────────┘
+```
+*(Saturation line shows coverage stats inline; grayed out if no Discovery run exists on current dataset.)*
 
 ### 2.2 Discovery Mode
 
@@ -60,7 +87,75 @@ Pipeline complete. Save codebook checkpoint?
 - IC count + timestamp
 - The `eqd_config.yaml` settings used for this run (for reproducibility)
 
-### 2.3 Validation Mode (Deductive Coding / Classification)
+### 2.3 Saturation Mode (Deepening Pass on Current Dataset)
+
+Saturation re-runs the extraction pipeline on the *same* dataset that Discovery processed,
+targeting only the character spans not yet covered by any existing verbatim quote.
+The intent is to reach theoretical saturation — the point where additional passes yield
+no new codes — before freezing the codebook with a checkpoint.
+
+**What makes it distinct from the other modes:**
+
+| | Discovery | Saturation | Validation | Evolution |
+|---|---|---|---|---|
+| Data | fresh | *same as Discovery* | new | new |
+| Codebook | empty / sparse | existing | locked | locked |
+| New ICs possible? | yes | yes | no | emerging area only |
+| New version minted? | yes (on checkpoint) | no | yes (on checkpoint) | yes (on checkpoint) |
+
+**Versioning contract:** No new codebook version is created during a Saturation pass.
+New ICs and new quotes produced are part of the same analytical version as the preceding
+Discovery run. The checkpoint that follows Saturation freezes both Discovery and Saturation
+output together as a single, complete version.
+
+**Pipeline flow in Saturation mode:**
+```
+Pre-pass: Compute gap spans
+    - Load all verbatim_quotes with span data for current dataset
+    - Compute interval union per segment (same algorithm as coverage metric)
+    - Identify contiguous uncovered spans above min_gap_length (config, default 50 chars)
+    - Each gap → mini-segment: {segment_id}_gap_{n}
+      with CONTEXT_WINDOW chars of surrounding text on each side
+    ↓
+Layer 1S: Open extraction on gap mini-segments (same Coder → Comparator → HIL pipeline)
+    - Coder system prompt includes full current codebook
+    - All quotes tagged evidence_source = 'saturation_pass'
+    - New ICs tagged introduced_in_version = current_version (not a new version)
+    ↓
+Layer 3S: Saturation report
+    - Per-segment coverage delta (before → after)
+    - New quotes added, new ICs created (if any)
+    - Saturation ITS (expected lower than Discovery ITS — that's the point)
+    - Segments still below coverage threshold after pass
+    ↓
+Prompt: "Run another saturation pass? (Saturation ITS: 0.04)"
+    - If ITS dropped below saturation_its_floor (config, default 0.02): auto-suggest stopping
+    - Analyst decides whether to iterate or proceed to checkpoint
+```
+
+**ITS interpretation in Saturation:**
+Discovery ITS measures how fast the codebook is growing. Saturation ITS measures the
+residual growth from gap spans. Saturation ITS is expected to be low — if it's high
+(many new ICs from gaps), it signals the initial Discovery pass was shallow and the
+codebook isn't ready to checkpoint. A separate `saturation_its_floor` config threshold
+avoids conflating Saturation with Discovery saturation.
+
+**Schema additions for Saturation:**
+- `evidence_source` column on `verbatim_quotes` (see Section 3.5)
+- `pipeline_runs.mode` enum extended to include `'saturation'`
+- Mini-segment IDs are ephemeral (not persisted as segments) — gap computation runs
+  in memory, only the resulting quotes are written to DB against original segment IDs
+
+**Configuration:**
+```yaml
+saturation:
+  min_gap_length: 50          # min chars for a gap span to be sent to coder
+  coverage_threshold: 1.0     # run on all segments with any gap (1.0 = all)
+  saturation_its_floor: 0.02  # suggest stopping when ITS drops below this
+  context_window: 200         # chars of surrounding context per gap mini-segment
+```
+
+### 2.4 Validation Mode (Deductive Coding / Classification)
 
 Codebook is locked. No new ICs. The goal is to classify new data against an existing framework.
 
@@ -92,7 +187,7 @@ Layer 3V: Quality metrics + Validation-specific metrics
     - Classification confidence distribution
 ```
 
-### 2.4 Evolution Mode
+### 2.5 Evolution Mode
 
 Core codebook locked, but new ICs can emerge in a separate holding area.
 
@@ -164,8 +259,8 @@ Track each pipeline execution for reliability comparison.
 ```sql
 CREATE TABLE IF NOT EXISTS pipeline_runs (
     id          TEXT PRIMARY KEY,
-    mode        TEXT NOT NULL CHECK(mode IN ('discovery', 'validation', 'evolution')),
-    version_id  TEXT REFERENCES codebook_versions(id),  -- NULL for Discovery
+    mode        TEXT NOT NULL CHECK(mode IN ('discovery', 'saturation', 'validation', 'evolution')),
+    version_id  TEXT REFERENCES codebook_versions(id),  -- NULL for Discovery and Saturation
     data_hash   TEXT,                    -- hash of input data (for reliability matching)
     started_at  TEXT NOT NULL,
     completed_at TEXT,
@@ -174,12 +269,24 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 );
 ```
 
+Note: `version_id` is NULL for Discovery and Saturation runs — both contribute to building
+a version, which is only assigned when a checkpoint is saved.
+
 ### 3.5 Modified Table: `verbatim_quotes`
 
-Add column to track which run produced this quote:
+Add two columns:
 ```sql
 ALTER TABLE verbatim_quotes ADD COLUMN run_id TEXT REFERENCES pipeline_runs(id);
+ALTER TABLE verbatim_quotes ADD COLUMN evidence_source TEXT
+    NOT NULL DEFAULT 'initial_pass'
+    CHECK(evidence_source IN ('initial_pass', 'saturation_pass'));
 ```
+
+- `run_id`: which pipeline execution produced this quote (enables per-run filtering)
+- `evidence_source`: distinguishes Discovery quotes (`initial_pass`) from Saturation quotes
+  (`saturation_pass`). Allows the saturation report to isolate the delta contribution and
+  lets analysts audit whether saturation-sourced evidence is qualitatively different.
+  Default `initial_pass` preserves backward compatibility with existing rows.
 
 ---
 
@@ -393,20 +500,32 @@ Available after 2+ codebook checkpoints. Compares IC lifecycle across versions.
 
 ## 7. Implementation Plan (Phased)
 
-### Phase 1: Schema + Discovery Checkpoint (smallest useful increment)
+### Phase 1a: Schema + Discovery Checkpoint (smallest useful increment)
 - Add `codebook_versions`, `codebook_version_ics`, `pipeline_runs` tables
 - Add `introduced_in_version`, `last_seen_version` to `initial_codes`
-- Add `run_id` to `verbatim_quotes`
+- Add `run_id`, `evidence_source` to `verbatim_quotes`
 - Implement checkpoint save after Discovery completion
 - CLI: `--save-checkpoint "name"`
+- Mode selection entry point with guardrails (Discovery only for now)
 - No changes to pipeline flow
 
-### Phase 2: Mode Selection + Validation Mode
-- Pipeline entry point: mode selection logic with guardrails
+### Phase 1b: Saturation Mode
+- Gap span computation (interval union on existing quotes per segment)
+- Mini-segment construction (`{segment_id}_gap_{n}` + context window)
+- Mode routing: `--mode saturation` runs Layer 1 on gap mini-segments only
+- `evidence_source = 'saturation_pass'` tagging on new quotes
+- Saturation ITS metric (separate floor config from Discovery ITS)
+- Saturation report: coverage delta, new quotes, new ICs, remaining gaps
+- Iterate-or-checkpoint prompt after each pass
+- Session-start UX updated to show Saturation option when available
+- Config: `saturation:` section in YAML
+
+### Phase 2: Validation Mode
 - ClassifierAgent: new agent class, prompts, output models
 - Validation pipeline flow (Layer 0 → Layer 1V → metrics)
 - Validation-specific metrics: coverage, gaps, frequency shifts
 - Config: `classifier_agent` section in YAML
+- Session-start UX: Validation option when checkpoint exists
 
 ### Phase 3: Evolution Mode
 - Mixed coding flow (ClassifierAgent first, then Coder for gaps)
@@ -441,16 +560,19 @@ Available after 2+ codebook checkpoints. Compares IC lifecycle across versions.
 - `tests/test_codebook_versioning.py`
 
 ### Modified Files
-- `src/db.py` — new tables, new repos (CodebookVersionRepo, PipelineRunRepo)
+- `src/db.py` — new tables, new repos (CodebookVersionRepo, PipelineRunRepo); `evidence_source` + `run_id` on VerbatimQuoteRepo
 - `src/models.py` — ClassificationCandidate, SegmentClassificationResult,
-  CodebookVersion, PipelineRun, ICLifecycleState
-- `src/pipeline.py` — mode selection, conditional flow, checkpoint logic
-- `src/config.py` — ClassifierAgentConfig, add to EQDConfig
-- `eqd_config.yaml` — classifier_agent section
+  CodebookVersion, PipelineRun, ICLifecycleState, SaturationReport
+- `src/pipeline.py` — mode selection, conditional flow, checkpoint logic, Saturation routing
+- `src/config.py` — ClassifierAgentConfig, SaturationConfig, add both to EQDConfig
+- `eqd_config.yaml` — classifier_agent + saturation sections
 - `scripts/run_pipeline.py` — CLI flags: --mode, --save-checkpoint, --reliability-compare
+
+### New Files (Saturation-specific, Phase 1b)
+- `src/saturation.py` — gap span computation, mini-segment construction, saturation ITS, saturation report
 
 ---
 
-*Document version: 1.0 — 2026-02-23*
-*Based on discussions in sessions: codebook versioning UX, classification agent,
-inter-rater reliability metrics, knowledge graph assessment*
+*Document version: 1.1 — 2026-03-03*
+*v1.0 (2026-02-23): initial design — three modes, ClassifierAgent, inter-rater reliability, longitudinal analytics*
+*v1.1 (2026-03-03): added Saturation mode (Section 2.3); updated to four modes throughout; added evidence_source + run_id schema; split Phase 1 into 1a (schema/checkpoint) and 1b (Saturation); added saturation.py to new files; updated mode enum in pipeline_runs; added SaturationConfig and SaturationReport to models*
