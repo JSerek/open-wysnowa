@@ -58,7 +58,8 @@ class TestBuildComparatorPrompts:
         assert "MERGE" in prompt
         assert "REJECT" in prompt
         assert "SUBCODE" not in prompt  # SUBCODE removed in favour of MERGE
-        assert "0.85" in prompt or "0.70" in prompt  # Threshold guidance
+        # Threshold guidance uses actual triage thresholds (0.55/0.65), not old stale values (0.85/0.70)
+        assert "0.65" in prompt or "0.55" in prompt  # updated 2026-03-04: calibrated to real grey zone
 
     def test_user_prompt_with_top_k(self):
         top_k = [
