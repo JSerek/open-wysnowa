@@ -131,6 +131,16 @@ flip rates mean the Coder and Comparator frequently disagree.
 **What it measures:** The distribution of coder confidence scores across all
 ICs. Should reflect genuine discrimination between strong and weak evidence.
 
+> ⚠️ **RELIABILITY WARNING (updated 2026-03-04):** Confidence scores are
+> currently considered **unreliable** pending multi-model comparison.
+> All runs to date (canon-30, canon-100) show Q1=Q2=Q3=0.9, IQR=0.1,
+> no low-confidence ICs — a signature of LLM overconfidence bias, not
+> genuine calibration. Fast models appear to assign near-maximal confidence
+> regardless of codebook density or evidence quality. **Do not make decisions
+> based on this metric until comparison runs with at least two model classes
+> have been completed.** Use `flip_rate` as a proxy for codebook-level
+> uncertainty instead.
+
 | Pattern | Status | Interpretation |
 |---------|--------|----------------|
 | Mean 0.7–0.9, SD > 0.10, spread across Q1–Q3 | 🟢 | Calibrated |
@@ -139,7 +149,12 @@ ICs. Should reflect genuine discrimination between strong and weak evidence.
 
 **Note:** A narrow distribution (e.g. Q1=Q2=Q3=0.9) is suspicious and worth
 flagging, even if the mean looks healthy. It suggests the model is not
-actually discriminating between stronger and weaker extractions.
+actually discriminating between stronger and weaker extractions. The root
+cause is that LLMs struggle to self-calibrate confidence in a single API
+call — they have no external reference to anchor against. The coder prompt
+asks the model to rate "how certain are you this concept is NOT already in
+the codebook?" but the model has no real uncertainty signal beyond its own
+token probabilities, which are not surfaced.
 
 ---
 
