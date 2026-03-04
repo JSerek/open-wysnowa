@@ -49,7 +49,7 @@ class TestLoadConfig:
         config = load_config(CONFIG_PATH)
         assert config.processing.batch_size == 10
         assert config.processing.its_saturation_threshold == 0.02
-        assert config.processing.coherence_threshold == 1.0
+        assert config.processing.coherence_threshold == 0.5  # updated 2026-03-04: lowered from 1.0
         assert config.processing.coherence_threshold_small == 0.90
 
     def test_meta_ic_filter_config(self):
