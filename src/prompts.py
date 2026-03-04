@@ -192,14 +192,26 @@ def build_coder_user_prompt_batch(
 
 # ── Codebook Comparator Prompts ──────────────────────────────────────────────
 
-def build_comparator_system_prompt() -> str:
+def build_comparator_system_prompt(
+    auto_merge_threshold: float = 0.65,
+    auto_new_threshold: float = 0.55,
+) -> str:
     """
     System prompt for the Codebook Comparator.
 
     Focused task: compare a new IC candidate against similar existing ICs
     and recommend an action.
+
+    Args:
+        auto_merge_threshold: triage similarity above which candidates are
+            auto-merged without LLM (from config.processing.auto_merge_threshold).
+        auto_new_threshold: triage similarity below which candidates are
+            auto-accepted as new without LLM (from config.processing.auto_new_threshold).
+        Only candidates whose top-1 similarity falls between these two values
+        reach this prompt.
     """
-    return """You are a qualitative coding expert reviewing a new Initial Code (IC) candidate for inclusion in an evolving codebook.
+    midpoint = round((auto_merge_threshold + auto_new_threshold) / 2, 2)
+    return f"""You are a qualitative coding expert reviewing a new Initial Code (IC) candidate for inclusion in an evolving codebook.
 
 YOUR TASK: Compare the new candidate against the most similar existing codes and recommend ONE action.
 
@@ -208,11 +220,19 @@ RECOMMENDATIONS:
 - MERGE: The candidate is semantically equivalent to an existing code — same meaning, just different wording, or a meaningful specialisation that doesn't warrant a separate code. Specify which code to merge into via merge_target_name.
 - REJECT: The candidate is too vague, not grounded in data, or genuinely redundant with no added value.
 
-DECISION CRITERIA:
-- Similarity score > 0.85: strong merge signal (but check if there's a meaningful distinction)
-- Similarity score 0.70-0.85: grey zone — look at definitions carefully
-- Similarity score < 0.70: likely a new code
-- Consider: do the codes describe the SAME thing from DIFFERENT angles, or DIFFERENT things that happen to use similar words?
+TRIAGE CONTEXT:
+This candidate reached you because its top-1 similarity to the nearest existing code
+falls in the grey zone ({auto_new_threshold}–{auto_merge_threshold}). Candidates above
+{auto_merge_threshold} were already auto-merged without LLM review; candidates below
+{auto_new_threshold} were already accepted as new. You are deciding the ambiguous middle.
+
+DECISION CRITERIA (calibrated to the similarity range you will actually see):
+- Similarity {midpoint}–{auto_merge_threshold}: lean toward MERGE — codes are very close;
+  merge unless you can articulate a clear, specific experiential distinction
+- Similarity {auto_new_threshold}–{midpoint}: genuine grey zone — read definitions carefully;
+  merge if the core experiential phenomenon overlaps, NEW if it extends meaningfully
+- Consider: do the codes describe the SAME experience from DIFFERENT angles, or DIFFERENT
+  experiences that happen to share vocabulary?
 
 --- NEGATIVE EXAMPLE (over-merging) ---
 
@@ -249,6 +269,10 @@ def build_comparator_user_prompt(
     """
     User prompt for the Codebook Comparator — carries candidate + top-K.
 
+    Structure: candidate first (establish what we're evaluating), then the
+    scored neighbours as the primary comparison signal, then the decision
+    question that ties scores to action.
+
     top_k is a list of (ic_id, name, definition, similarity_score) tuples.
     """
     lines = [
@@ -260,15 +284,23 @@ def build_comparator_user_prompt(
     ]
 
     if not top_k:
-        lines.append("SIMILAR EXISTING CODES: (none — codebook is empty)")
+        lines.append("MOST SIMILAR EXISTING CODES: (none — codebook is empty)")
+        lines.append("")
+        lines.append("Decision: this is a NEW code by default (no existing codes to compare against).")
     else:
-        lines.append(f"TOP-{len(top_k)} SIMILAR EXISTING CODES:")
+        lines.append(f"TOP-{len(top_k)} MOST SIMILAR EXISTING CODES (ranked by embedding similarity):")
         for i, (ic_id, name, definition, sim) in enumerate(top_k, 1):
-            lines.append(f"  [{i}] {name} (similarity: {sim:.3f})")
+            lines.append(f"  [{i}] {name}  (similarity: {sim:.3f})")
             lines.append(f"      Definition: {definition}")
         lines.append("")
+        lines.append("---")
+        lines.append("Does the candidate describe the SAME experiential phenomenon as any of the")
+        lines.append("codes above (→ MERGE), a DISTINCT phenomenon not captured above (→ NEW),")
+        lines.append("or is it too vague / redundant to include (→ REJECT)?")
+        lines.append("Use the similarity scores and definitions as your primary signal.")
 
-    lines.append("Provide your recommendation as a ComparatorOutput.")
+    lines.append("")
+    lines.append("Return a ComparatorOutput with your recommendation and brief reasoning.")
     return "\n".join(lines)
 
 

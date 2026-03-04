@@ -184,7 +184,10 @@ class CodebookComparator:
 
         Uses instructor for structured output → ComparatorOutput.
         """
-        system_prompt = build_comparator_system_prompt()
+        system_prompt = build_comparator_system_prompt(
+            auto_merge_threshold=self.config.processing.auto_merge_threshold,
+            auto_new_threshold=self.config.processing.auto_new_threshold,
+        )
         user_prompt = build_comparator_user_prompt(
             candidate_name=candidate.ic_name,
             candidate_definition=candidate.definition,
