@@ -1,5 +1,8 @@
-# EQD-AI Configuration
-# API keys are NEVER stored here — use .env file
+# EQD-AI v2 Configuration — Evidence Extraction (L0 + L1)
+# API keys are NEVER stored here — use .env file.
+# v1-only blocks (synthesizer/category/analyst agents, theme_refinement,
+# analyst_guidelines, L2 thresholds) were removed in the v2 pivot — recover from
+# the v1-full-pipeline git tag if needed.
 
 # ── PROVIDERS ─────────────────────────────────────────────────────
 providers:
@@ -7,26 +10,6 @@ providers:
     type: openai_compatible
     api_key_env: OPENAI_API_KEY
     base_url: https://api.openai.com/v1
-
-  anthropic:
-    type: anthropic
-    api_key_env: ANTHROPIC_API_KEY
-
-  # Anthropic via OpenAI-compatible endpoint (for embeddings workaround)
-  anthropic_oai:
-    type: openai_compatible
-    api_key_env: ANTHROPIC_API_KEY
-    base_url: https://api.anthropic.com/v1/
-
-  ollama:
-    type: openai_compatible
-    api_key_env: OLLAMA_API_KEY
-    base_url: http://localhost:11434/v1
-
-  lmstudio:
-    type: openai_compatible
-    api_key_env: LMSTUDIO_API_KEY
-    base_url: http://localhost:1234/v1
 
   google:
     type: openai_compatible
@@ -43,49 +26,24 @@ providers:
 
 # ── NAMED MODELS ──────────────────────────────────────────────────
 models:
-  gpt4o_mini:
-    provider: openai
-    model_id: gpt-4o-mini
-
-  claude_haiku:
-    provider: anthropic
-    model_id: claude-haiku-4-5-20251001
-
-  claude_sonnet:
-    provider: anthropic
-    model_id: claude-sonnet-4-5-20250929
-
-  llama_local:
-    provider: ollama
-    model_id: llama3.1:70b
-
-  gemini_flash:
-    provider: google
-    model_id: gemini-2.5-flash
-
-  gemini_flash_3_preview:
-    provider: google
-    model_id: gemini-3-flash-preview
-
-  gemini_flash_lite:
-    provider: google
-    model_id: gemini-2.5-flash-lite  # non-thinking, fast, cheaper
-
-  gemini_pro:
-    provider: google
-    model_id: gemini-2.5-pro-preview-05-06
-
   embed_openai:
     provider: openai
     model_id: text-embedding-3-small
 
-  # ── OpenRouter models ─────────────────────────────────────────────
+  # Google direct (swap option for coder/comparator)
+  gemini_flash_lite:
+    provider: google
+    model_id: gemini-2.5-flash-lite  # non-thinking, fast, cheaper
+  gemini_flash_3_preview:
+    provider: google
+    model_id: gemini-3-flash-preview
+
+  # OpenRouter (active)
   or_fast:
     provider: openrouter
     model_id: openai/gpt-5-nano
     reasoning: true               # gpt-5-nano is a reasoning model (uses reasoning tokens)
     reasoning_style: openai       # → extra_body: {"reasoning_effort": "low"|...}
-
   or_smart:
     provider: openrouter
     model_id: google/gemini-3-flash-preview
@@ -93,77 +51,23 @@ models:
     reasoning_style: openai       # OpenRouter normalises to openai-style extra_body params
 
 # ── AGENTS ────────────────────────────────────────────────────────
-# Active config: uncomment one block, comment the others.
+# v2 uses only the extraction agents + embeddings.
 # Embeddings always stay on OpenAI (OpenRouter has no embedding API).
-
-# ── GOOGLE direct (swap back to activate) ───────────────────────
-# agents:
-#   coder_agent:
-#     model: gemini_flash_lite      # non-thinking Gemini; uses JSON mode (see google provider)
-#     temperature: 0.2
-#     max_tokens: 4000
-#     # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
-#
-#   codebook_comparator:
-#     model: gemini_flash_lite
-#     temperature: 0.1
-#     max_tokens: 2000
-#     # reasoning_effort omitted: gemini_flash_lite has no baked-in reasoning
-#
-#   synthesizer_agent:
-#     model: claude_sonnet
-#     temperature: 0.2
-#     max_tokens: 16000  # extended output beta required for Claude (sent automatically)
-#
-#   category_agent:
-#     model: claude_sonnet
-#     temperature: 0.2
-#     max_tokens: 16000  # extended output beta required for Claude (sent automatically)
-#
-#   analyst_agent:
-#     model: claude_sonnet
-#     temperature: 0.3
-#     max_tokens: 16000
-#
-#   embedding:
-#     model: embed_openai
-
-# ── CURRENT: OpenRouter ──────────────────────────────────────────
-# To switch back: comment this block, uncomment Google direct above.
-# Update or_fast / or_smart model_ids above after verifying on openrouter.ai/models
 agents:
   coder_agent:
-    model: or_smart        # openai/gpt-5-nano — reasoning model
+    model: or_smart        # google/gemini-3-flash-preview (reasoning model)
     temperature: 0.2
     max_tokens: 16000
     reasoning_effort: low  # mechanical extraction task — low effort saves tokens
 
   codebook_comparator:
-    model: or_smart
+    model: or_smart        # google/gemini-3-flash-preview (reasoning model)
     temperature: 0.1
     max_tokens: 8000
     reasoning_effort: low  # merge/new decision — mechanical, low effort appropriate
 
-  synthesizer_agent:
-    model: or_smart       # google/gemini-3-flash-preview — reasoning model
-    temperature: 0.2
-    max_tokens: 32000
-    # reasoning_effort omitted: interpretive task benefits from model default
-
-  category_agent:
-    model: or_smart
-    temperature: 0.2
-    max_tokens: 32000
-    # reasoning_effort omitted: interpretive task
-
-  analyst_agent:
-    model: or_smart
-    temperature: 0.3
-    max_tokens: 32000
-    # reasoning_effort omitted: interpretive task
-
   embedding:
-    model: embed_openai   # stays on OpenAI — OpenRouter has no embedding API
+    model: embed_openai    # stays on OpenAI — OpenRouter has no embedding API
 
 # ── STUDY ─────────────────────────────────────────────────────────
 study:
@@ -178,103 +82,10 @@ processing:
   its_consecutive_batches: 3
   similarity_prefilter_k: 5
   merge_conflict_similarity_threshold: 0.75
-  auto_new_threshold: 0.55          # raised 0.50→0.55 (2026-03-04, L4 recommendation)
-  auto_merge_threshold: 0.65        # lowered 0.72→0.65 (2026-03-04, L4 recommendation)
-  category_merge_threshold: 0.90
-  coherence_threshold: 0.5           # lowered 1.0→0.5 (2026-03-04) — gate was effectively disabled at 1.0; 0.5 means flag themes >50% below mean coherence
-  coherence_threshold_small: 0.90
-  reasoning_log_mode: full   # "full" = log every call | "failures_only" = log only failed calls (production)
+  auto_new_threshold: 0.55          # sim < 0.55 → auto-NEW   (raised 0.50→0.55, 2026-03-04)
+  auto_merge_threshold: 0.65        # sim > 0.65 → auto-MERGE (lowered 0.72→0.65, 2026-03-04)
+  reasoning_log_mode: full   # "full" = log every call | "failures_only" = only failed calls
   meta_ic_filter:
     enabled: true
-    name_patterns: []      # domain-agnostic: empty by default. Add patterns like "overall_", "_verdict" for your domain
-    definition_signals: []  # domain-agnostic: empty by default. Add signals like "overall experience" for your domain
-
-# ── THEME REFINEMENT ─────────────────────────────────────────────
-# Post-synthesis refinement: distinctness revision + theme splitting
-theme_refinement:
-  distinctness_threshold: 0.80       # centroid sim above this → flag for LLM revision (raised 0.70→0.80, 2026-03-04 — reduce false-positive overlap flags)
-  max_overlap_pairs: 10              # max pairs to address per pass
-  split_min_ics: 8                   # minimum ICs to consider splitting a theme
-  split_max_coherence: 0.50          # raw coherence below this triggers split check
-  split_min_overlaps: 3              # minimum overlap pairs (>0.70) to trigger split
-
-# ── ANALYST GUIDELINES ──────────────────────────────────────────
-# Reference ranges for Layer 4 metric interpretation.
-# These are guidelines, not gates. The LLM uses them to contextualise
-# metric values, not to make pass/fail decisions.
-analyst_guidelines:
-  grounding_rate:
-    healthy_min: 0.95
-    description: "Proportion of verbatim quotes whose spans exactly match the source text"
-    what_it_measures: "Whether the coder agent is hallucinating quote boundaries"
-    low_means: "The coder is generating quotes that don't match the source text — check span validation"
-
-  drop_rate:
-    healthy_max: 0.15
-    description: "Proportion of LLM-proposed IC candidates dropped due to span validation failure"
-    what_it_measures: "How often the coder proposes quotes with incorrect character offsets"
-    high_means: "The coder is frequently hallucinating span positions — may indicate prompt issues or difficult text"
-
-  extraction_density_mean:
-    healthy_min: 0.30
-    healthy_max: 0.80
-    description: "Mean fraction of segment text covered by IC quotes (character-level)"
-    what_it_measures: "How much of each segment's content is being captured by IC extraction"
-    low_means: "Large portions of text are being ignored — possible missed phenomena"
-    high_means: "Nearly all text is being coded — check for over-extraction or trivial ICs"
-
-  singleton_ratio:
-    healthy_max: 0.30
-    description: "Proportion of active ICs with only 1 supporting quote"
-    what_it_measures: "Evidence concentration — are ICs well-supported or one-off observations?"
-    high_means: "Many ICs have minimal evidence — possible over-splitting or premature IC creation"
-
-  merge_rate_final:
-    healthy_min: 0.40
-    healthy_max: 0.80
-    description: "Proportion of new candidates merged into existing ICs (final batches)"
-    what_it_measures: "Codebook maturity — higher merge rate suggests the codebook is stabilising"
-    low_means: "Codebook is still growing rapidly — may need more data before thematic synthesis"
-    high_means: "Very few new concepts emerging — codebook may be saturated"
-
-  triage_auto_rate:
-    healthy_min: 0.60
-    description: "Proportion of triage decisions made automatically (high-confidence)"
-    what_it_measures: "How often the embedding similarity gives a clear signal"
-    low_means: "Many grey-zone cases — thresholds may need tuning or ICs are poorly differentiated"
-
-  its_final:
-    healthy_max: 0.05
-    description: "Incremental Type Saturation — fraction of new ICs in the last batch"
-    what_it_measures: "Whether new concepts are still emerging from the data"
-    high_means: "New concepts still emerging — more data needed before the codebook is stable"
-
-  theme_coherence_mean:
-    healthy_min: 0.55
-    description: "Mean intra-theme IC embedding similarity"
-    what_it_measures: "How semantically similar the ICs within each theme are"
-    low_means: "Themes may be grouping unrelated concepts — consider splitting or reorganising"
-
-  theme_distinctness_overlap_ratio:
-    healthy_max: 0.25
-    description: "Proportion of theme pairs with centroid similarity > 0.70"
-    what_it_measures: "How much themes overlap with each other"
-    high_means: "Many overlapping themes — consider merging similar themes or sharpening definitions"
-
-  sentiment_purity_mean:
-    healthy_min: 0.80
-    description: "Mean dominant-sentiment ratio per theme"
-    what_it_measures: "Whether themes mix positive and negative evidence"
-    low_means: "Themes contain mixed sentiment — may be analytically confusing"
-
-  thematic_coverage:
-    healthy_min: 0.90
-    description: "Proportion of quotes belonging to ICs that are assigned to themes"
-    what_it_measures: "How much evidence is captured in the thematic structure"
-    low_means: "Significant evidence is outside the thematic structure — orphaned ICs need attention"
-
-  cross_review_convergence:
-    healthy_min: 0.50
-    description: "Proportion of ICs with evidence from 2+ different documents"
-    what_it_measures: "Whether ICs represent cross-document patterns vs single-document artifacts"
-    low_means: "Many ICs supported by only one document — may be idiosyncratic, not thematic"
+    name_patterns: []      # domain-agnostic: empty by default. Add e.g. "overall_", "_verdict"
+    definition_signals: []  # domain-agnostic: empty by default. Add e.g. "overall experience"

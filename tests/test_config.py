@@ -28,15 +28,15 @@ class TestLoadConfig:
 
     def test_has_providers(self):
         config = load_config(CONFIG_PATH)
+        # v2 keeps openai (embeddings), google (gemini direct swap), openrouter (active)
         assert "openai" in config.providers
-        assert "anthropic" in config.providers
+        assert "openrouter" in config.providers
         assert config.providers["openai"].type == "openai_compatible"
-        assert config.providers["anthropic"].type == "anthropic"
+        assert config.providers["openrouter"].type == "openai_compatible"
 
     def test_has_models(self):
         config = load_config(CONFIG_PATH)
-        assert "gpt4o_mini" in config.models
-        assert "claude_haiku" in config.models
+        assert "or_smart" in config.models
         assert "embed_openai" in config.models
 
     def test_has_agents(self):
@@ -49,8 +49,9 @@ class TestLoadConfig:
         config = load_config(CONFIG_PATH)
         assert config.processing.batch_size == 10
         assert config.processing.its_saturation_threshold == 0.02
-        assert config.processing.coherence_threshold == 0.5  # updated 2026-03-04: lowered from 1.0
-        assert config.processing.coherence_threshold_small == 0.90
+        # v2 L1 thresholds
+        assert config.processing.auto_new_threshold == 0.55
+        assert config.processing.auto_merge_threshold == 0.65
 
     def test_meta_ic_filter_config(self):
         config = load_config(CONFIG_PATH)
