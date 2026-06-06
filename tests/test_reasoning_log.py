@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.reasoning_log import ReasoningLogger, extract_reasoning
+from src.core.reasoning_log import ReasoningLogger, extract_reasoning
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

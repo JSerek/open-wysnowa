@@ -15,8 +15,8 @@ import unicodedata
 import re
 from typing import Iterator, List, Tuple
 
-from src.db import Database, DocumentRepo, SegmentRepo
-from src.models import Document, Segment, new_id
+from src.core.db import Database, DocumentRepo, SegmentRepo
+from src.core.models import Document, Segment, new_id
 
 
 # ── Normalization ────────────────────────────────────────────────────────────

@@ -17,19 +17,19 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.coder_agent import CoderAgent
-from src.codebook_comparator import CodebookComparator
-from src.config import EQDConfig, ModelClient
-from src.reasoning_log import ReasoningLogger
-from src.db import (
+from src.extraction.coder_agent import CoderAgent
+from src.extraction.codebook_comparator import CodebookComparator
+from src.core.config import EQDConfig, ModelClient
+from src.core.reasoning_log import ReasoningLogger
+from src.core.db import (
     Database,
     DecisionLogRepo,
     InitialCodeRepo,
     SegmentRepo,
     VerbatimQuoteRepo,
 )
-from src.embeddings import EmbeddingService, SimilarityResult
-from src.hil import (
+from src.core.embeddings import EmbeddingService, SimilarityResult
+from src.extraction.hil import (
     CONTEXT_WINDOW,
     display_batch_header,
     display_batch_summary,
@@ -40,7 +40,7 @@ from src.hil import (
     prompt_edit_candidate,
     prompt_saturation_checkpoint,
 )
-from src.models import (
+from src.core.models import (
     BatchITS,
     ComparatorOutput,
     ComparatorRecommendation,
@@ -54,7 +54,7 @@ from src.models import (
     Segment,
     VerbatimQuote,
 )
-from src.prompts import build_ic_refinement_prompt
+from src.extraction.prompts import build_ic_refinement_prompt
 from src.preprocessing import batch_segments
 
 logger = logging.getLogger(__name__)
@@ -1038,7 +1038,7 @@ class Layer1Orchestrator:
 
                 # Compute stability score (cosine similarity between old and new embedding)
                 if old_embedding and ic.embedding_json:
-                    from src.embeddings import cosine_similarity as _cos_sim
+                    from src.core.embeddings import cosine_similarity as _cos_sim
                     stability = _cos_sim(old_embedding, ic.embedding_json)
                     stability_scores.append({
                         "ic_name": ic.name,

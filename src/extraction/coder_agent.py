@@ -20,11 +20,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config import EQDConfig, ModelClient
-from src.reasoning_log import ReasoningLogger
-from src.db import Database, InitialCodeRepo
-from src.models import BatchCodingResult, ICCandidate, InitialCode, Segment, SegmentCodingResult
-from src.prompts import (
+from src.core.config import EQDConfig, ModelClient
+from src.core.reasoning_log import ReasoningLogger
+from src.core.db import Database, InitialCodeRepo
+from src.core.models import BatchCodingResult, ICCandidate, InitialCode, Segment, SegmentCodingResult
+from src.extraction.prompts import (
     build_codebook_context,
     build_coder_system_prompt,
     build_coder_user_prompt,

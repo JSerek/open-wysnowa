@@ -14,9 +14,9 @@ import math
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
-from src.config import EQDConfig, ModelClient
-from src.db import Database, InitialCodeRepo, VerbatimQuoteRepo
-from src.models import InitialCode, VerbatimQuote
+from src.core.config import EQDConfig, ModelClient
+from src.core.db import Database, InitialCodeRepo, VerbatimQuoteRepo
+from src.core.models import InitialCode, VerbatimQuote
 
 
 # ── Cosine Similarity (pure Python — no numpy dependency for core) ───────────

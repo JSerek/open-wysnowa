@@ -8,13 +8,13 @@ import math
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.db import InitialCodeRepo, VerbatimQuoteRepo
-from src.embeddings import (
+from src.core.db import InitialCodeRepo, VerbatimQuoteRepo
+from src.core.embeddings import (
     cosine_similarity,
     EmbeddingService,
     SimilarityResult,
 )
-from src.models import InitialCode, ICStatus, VerbatimQuote
+from src.core.models import InitialCode, ICStatus, VerbatimQuote
 
 
 class TestCosineSimilarity:
@@ -149,7 +149,7 @@ class TestMeaningSaturation:
         assert result == 0.0  # No existing quotes → novel
 
     def test_redundant_quote_detected(self, db, sample_documents, sample_segment, sample_ics):
-        from src.db import DocumentRepo, SegmentRepo
+        from src.core.db import DocumentRepo, SegmentRepo
         DocumentRepo(db).insert(sample_documents[0])
         SegmentRepo(db).insert(sample_segment)
         InitialCodeRepo(db).insert(sample_ics[0])

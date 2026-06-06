@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.codebook_comparator import CodebookComparator
-from src.embeddings import SimilarityResult
-from src.models import (
+from src.extraction.codebook_comparator import CodebookComparator
+from src.core.embeddings import SimilarityResult
+from src.core.models import (
     ComparatorOutput,
     ComparatorRecommendation,
     ICCandidate,
@@ -163,7 +163,7 @@ class TestCodebookComparatorTriage:
         mc, mock_client, embedding_service = mock_services
         config = self._make_config()
 
-        from src.db import InitialCodeRepo
+        from src.core.db import InitialCodeRepo
         ic_repo = InitialCodeRepo(db)
         for ic in sample_ics:
             ic_repo.insert(ic)
@@ -195,7 +195,7 @@ class TestCodebookComparatorTriage:
         mc, mock_client, embedding_service = mock_services
         config = self._make_config()
 
-        from src.db import InitialCodeRepo
+        from src.core.db import InitialCodeRepo
         ic_repo = InitialCodeRepo(db)
         for ic in sample_ics:
             ic_repo.insert(ic)

@@ -8,6 +8,10 @@ status tag:
 - `[in progress]` — actively being worked on
 - `[done]` — implemented; kept for reference
 
+> **v2 note (2026-06-06):** project pivoted to an L0–L1 evidence-extraction focus.
+> Active v2 backlog lives in `docs/v2/V2_ROADMAP.md`; harvested L1 baseline in
+> `docs/v2/V2_FOUNDATION.md`. Entries below are v1 test-run ideas, kept for reference.
+
 ---
 
 ## Singleton Ratio

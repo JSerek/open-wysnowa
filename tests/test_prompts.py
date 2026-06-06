@@ -1,8 +1,8 @@
 """Tests for prompt construction."""
 
 import pytest
-from src.models import InitialCode, ICStatus
-from src.prompts import (
+from src.core.models import InitialCode, ICStatus
+from src.extraction.prompts import (
     build_codebook_context,
     build_coder_system_prompt,
     build_coder_user_prompt,

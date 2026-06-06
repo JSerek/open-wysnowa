@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.codebook_signoff import CodebookSignoff, display_codebook_summary
-from src.db import Database, InitialCodeRepo, VerbatimQuoteRepo
-from src.models import InitialCode, ICStatus, VerbatimQuote
+from src.extraction.codebook_signoff import CodebookSignoff, display_codebook_summary
+from src.core.db import Database, InitialCodeRepo, VerbatimQuoteRepo
+from src.core.models import InitialCode, ICStatus, VerbatimQuote
 
 
 class TestDisplayCodebookSummary:
@@ -135,8 +135,8 @@ class TestCodebookSignoffRunAcceptsLowConfIds:
         CodebookSignoff.run() should pass the flagged IDs to display_codebook_summary.
         We verify this by patching display_codebook_summary and checking its call args.
         """
-        with patch("src.codebook_signoff.display_codebook_summary") as mock_display, \
-             patch("src.codebook_signoff.prompt_signoff_action", return_value="S"), \
+        with patch("src.extraction.codebook_signoff.display_codebook_summary") as mock_display, \
+             patch("src.extraction.codebook_signoff.prompt_signoff_action", return_value="S"), \
              patch.object(CodebookSignoff, "_confirm_signoff", return_value=True), \
              patch.object(CodebookSignoff, "_get_quote_counts", return_value={}):
 
@@ -164,8 +164,8 @@ class TestCodebookSignoffRunAcceptsLowConfIds:
 
     def test_run_without_ids_passes_empty_set(self):
         """When no IDs passed, display receives an empty set (no ⚑ flags)."""
-        with patch("src.codebook_signoff.display_codebook_summary") as mock_display, \
-             patch("src.codebook_signoff.prompt_signoff_action", return_value="S"), \
+        with patch("src.extraction.codebook_signoff.display_codebook_summary") as mock_display, \
+             patch("src.extraction.codebook_signoff.prompt_signoff_action", return_value="S"), \
              patch.object(CodebookSignoff, "_confirm_signoff", return_value=True), \
              patch.object(CodebookSignoff, "_get_quote_counts", return_value={}):
 
@@ -196,8 +196,8 @@ class TestCodebookSignoffQuoteCounts:
         vq_repo = VerbatimQuoteRepo(db)
 
         # Need a segment for foreign key
-        from src.db import SegmentRepo, DocumentRepo
-        from src.models import Document, Segment
+        from src.core.db import SegmentRepo, DocumentRepo
+        from src.core.models import Document, Segment
 
         doc = Document(id="doc_001", raw_text="test text")
         DocumentRepo(db).insert(doc)

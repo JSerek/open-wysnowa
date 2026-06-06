@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, List, Optional
 
-from src.models import (
+from src.core.models import (
     Category,
     CategoryTheme,
     DecisionLog,

@@ -23,7 +23,7 @@ from typing import List, Optional
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.models import Document
+from src.core.models import Document
 
 
 def load_reviews(

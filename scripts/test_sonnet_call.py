@@ -27,7 +27,7 @@ except ImportError:
     pass  # dotenv optional; set ANTHROPIC_API_KEY manually if needed
 
 from pydantic import BaseModel
-from src.config import load_config, ModelClient
+from src.core.config import load_config, ModelClient
 
 
 # ── Minimal structured output model ──────────────────────────────────────────

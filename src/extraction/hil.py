@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.embeddings import SimilarityResult
-from src.models import BatchITS, ComparatorOutput, ICCandidate
+from src.core.embeddings import SimilarityResult
+from src.core.models import BatchITS, ComparatorOutput, ICCandidate
 
 REASONING_PREVIEW = 200   # chars shown before truncation hint
 DEFINITION_PREVIEW = 85   # chars shown per top-K IC in candidate display

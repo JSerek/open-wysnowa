@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from src.config import (
+from src.core.config import (
     EQDConfig,
     load_config,
     ModelClient,
@@ -84,7 +84,7 @@ class TestModelClient:
         assert mc is not None
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch("src.config.load_dotenv")  # Prevent .env from re-loading keys
+    @patch("src.core.config.load_dotenv")  # Prevent .env from re-loading keys
     def test_missing_env_var_raises(self, mock_dotenv):
         config = load_config(CONFIG_PATH)
         with pytest.raises(EnvironmentError, match="not set"):

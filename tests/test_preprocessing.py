@@ -2,8 +2,8 @@
 
 import pytest
 
-from src.db import DocumentRepo, SegmentRepo
-from src.models import Document
+from src.core.db import DocumentRepo, SegmentRepo
+from src.core.models import Document
 from src.preprocessing import (
     normalize,
     canonicalize,

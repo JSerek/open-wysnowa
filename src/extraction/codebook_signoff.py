@@ -13,14 +13,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.db import (
+from src.core.db import (
     Database,
     DecisionLogRepo,
     InitialCodeRepo,
     VerbatimQuoteRepo,
 )
-from src.embeddings import EmbeddingService
-from src.models import (
+from src.core.embeddings import EmbeddingService
+from src.core.models import (
     DecisionLog,
     DecisionType,
     ICStatus,

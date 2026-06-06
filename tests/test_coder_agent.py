@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.coder_agent import CoderAgent
-from src.models import BatchCodingResult, ICCandidate, Segment, SegmentCodingResult
+from src.extraction.coder_agent import CoderAgent
+from src.core.models import BatchCodingResult, ICCandidate, Segment, SegmentCodingResult
 
 
 @pytest.fixture

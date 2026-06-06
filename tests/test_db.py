@@ -4,7 +4,7 @@ import json
 import pytest
 from datetime import datetime
 
-from src.db import (
+from src.core.db import (
     Database,
     DocumentRepo,
     SegmentRepo,
@@ -14,7 +14,7 @@ from src.db import (
     DecisionLogRepo,
     QualityMetricRepo,
 )
-from src.models import (
+from src.core.models import (
     DecisionLog,
     DecisionType,
     Document,

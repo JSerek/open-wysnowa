@@ -17,16 +17,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config import EQDConfig, ModelClient
-from src.reasoning_log import ReasoningLogger
-from src.db import Database, InitialCodeRepo
-from src.embeddings import EmbeddingService, SimilarityResult
-from src.models import (
+from src.core.config import EQDConfig, ModelClient
+from src.core.reasoning_log import ReasoningLogger
+from src.core.db import Database, InitialCodeRepo
+from src.core.embeddings import EmbeddingService, SimilarityResult
+from src.core.models import (
     ComparatorOutput,
     ComparatorRecommendation,
     ICCandidate,
 )
-from src.prompts import build_comparator_system_prompt, build_comparator_user_prompt
+from src.extraction.prompts import build_comparator_system_prompt, build_comparator_user_prompt
 
 logger = logging.getLogger(__name__)
 

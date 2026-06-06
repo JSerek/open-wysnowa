@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.models import (
+from src.core.models import (
     BatchITS,
     ComparatorOutput,
     ComparatorRecommendation,
@@ -11,7 +11,7 @@ from src.models import (
     Segment,
     SegmentCodingResult,
 )
-from src.orchestrator import ITSTracker, Layer1Orchestrator
+from src.extraction.orchestrator import ITSTracker, Layer1Orchestrator
 
 
 # ── ITS Tracker Tests ────────────────────────────────────────────────────────
@@ -105,8 +105,8 @@ class TestLayer1Orchestrator:
         Seeds the DB with the test document and segment so FK constraints
         are satisfied when the orchestrator persists ICs and quotes.
         """
-        from src.db import DocumentRepo, SegmentRepo
-        from src.models import Document
+        from src.core.db import DocumentRepo, SegmentRepo
+        from src.core.models import Document
 
         # Seed DB with FK parents
         DocumentRepo(db).insert(Document(id="doc_test", raw_text="test"))

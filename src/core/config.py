@@ -142,7 +142,8 @@ class EQDConfig(BaseModel):
 def load_config(config_path: Optional[Path] = None) -> EQDConfig:
     """Load and validate YAML config file."""
     if config_path is None:
-        config_path = Path(__file__).parent.parent / "eqd_config.yaml"
+        # config.py lives at src/core/ — project root is three levels up
+        config_path = Path(__file__).parent.parent.parent / "eqd_config.yaml"
     if not config_path.exists():
         raise FileNotFoundError(f"Config not found: {config_path}")
 

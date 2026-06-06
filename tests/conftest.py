@@ -8,8 +8,8 @@ to match the intended use case.
 import pytest
 from datetime import datetime
 
-from src.db import Database
-from src.models import (
+from src.core.db import Database
+from src.core.models import (
     Document,
     InitialCode,
     ICStatus,

@@ -4,6 +4,27 @@ Status legend: `[ready]` = spec clear, can implement next · `[design]` = needs 
 
 ---
 
+## v2 — Evidence-Extraction Focus `[active]`
+
+> As of the v2 pivot, `main` is slimmed to L0–L1 (evidence extraction). The full
+> L0–L4 pipeline is preserved in the `v1-full-pipeline` tag / `archive/full-pipeline`
+> branch. Everything below the next divider is **v1 history** (L1–L4), kept for
+> reference. v2 detail lives in `docs/v2/V2_ROADMAP.md` and `docs/v2/V2_FOUNDATION.md`.
+
+- **Omitted-text second pass** `[design]` — compute the complement of captured spans,
+  re-feed with omitted regions highlighted, require explicit keep/skip + reasoning.
+  (Supersedes/absorbs the older "Complementary Extraction Pass" idea below.)
+- **Multi-model / multi-prompt leaderboard** `[design]` — run L1 across models +
+  prompt variants over canonical datasets, rank on `src/eval/l1_metrics.py`. Needs
+  per-run metadata (model/prompt/embedding/dataset). Home: `src/leaderboard/`.
+- **Embedding-model comparison + IC-naming-consistency metrics** `[explore]` — track
+  which embedding model produced a run; add naming-consistency metric(s); compare
+  embedding models head-to-head.
+- **Eval methodology** `[later]` — exploratory → reference-free for now; revisit a
+  gold/annotated set only if a confirmatory need arises.
+
+---
+
 ## Resolved — Implemented Features
 
 ### P1: Synthesizer Prompt Granularity Fix `[resolved]`
@@ -493,4 +514,6 @@ Run the pipeline on multiple datasets (e.g., reviews for Game A, Game B, Game C)
 
 ---
 
-*Last updated: 2026-03-03 — Context window: replaced sentence-boundary detection with 130-char fixed window + newline collapse + word-boundary snap. HIL display: visual ─── separators around quote block, Span + Coverage on dedicated lines with quote char count. Added [design]: Complementary Extraction Pass (span-targeted variant recommended), Split IC evidence splitting.*
+*Last updated: 2026-06-06 — v2 pivot: main slimmed to L0–L1 (evidence extraction); full L0–L4 pipeline preserved in `v1-full-pipeline` tag / `archive/full-pipeline` branch. Added "v2 — Evidence-Extraction Focus" section (omitted-text pass, leaderboard, embedding comparison; eval deferred reference-free). See docs/v2/.*
+
+*Prior update: 2026-03-03 — Context window: replaced sentence-boundary detection with 130-char fixed window + newline collapse + word-boundary snap. HIL display: visual ─── separators around quote block, Span + Coverage on dedicated lines with quote char count. Added [design]: Complementary Extraction Pass (span-targeted variant recommended), Split IC evidence splitting.*

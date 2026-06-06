@@ -2,8 +2,8 @@
 
 import pytest
 
-from src.db import DocumentRepo, SegmentRepo, InitialCodeRepo, VerbatimQuoteRepo
-from src.grounding import (
+from src.core.db import DocumentRepo, SegmentRepo, InitialCodeRepo, VerbatimQuoteRepo
+from src.preprocessing import (
     verify_quote,
     attempt_realign,
     verify_ic_quotes,
@@ -11,7 +11,7 @@ from src.grounding import (
     corpus_coverage_summary,
     GroundingReport,
 )
-from src.models import (
+from src.core.models import (
     Document,
     InitialCode,
     ICStatus,

@@ -13,8 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
-from src.db import Database, InitialCodeRepo, SegmentRepo, VerbatimQuoteRepo
-from src.models import InitialCode, Segment, VerbatimQuote
+from src.core.db import Database, InitialCodeRepo, SegmentRepo, VerbatimQuoteRepo
+from src.core.models import InitialCode, Segment, VerbatimQuote
 
 
 # ── Single Quote Verification ────────────────────────────────────────────────
@@ -152,7 +152,7 @@ def compute_corpus_coverage(db: Database) -> Dict[str, float]:
     """
     seg_repo = SegmentRepo(db)
     # Get all documents first, then their segments
-    from src.db import DocumentRepo
+    from src.core.db import DocumentRepo
     doc_repo = DocumentRepo(db)
     docs = doc_repo.get_all()
 
