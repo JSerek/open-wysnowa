@@ -43,8 +43,8 @@ variants, then rank them on the L1 metrics (`src/eval/l1_metrics.py`).
 - Likely the **container** the other workstreams plug into, not a standalone
   feature.
 - Net-new scaffolding required: per-run metadata (model id, prompt variant,
-  embedding model, dataset) — v1's `compare_runs.py` reads JSON only and tracks no
-  such metadata.
+  embedding model, dataset) — v1's `compare_runs.py` (now in
+  `archived/v1/scripts/`) reads JSON only and tracks no such metadata.
 - Home reserved at `src/leaderboard/` (placeholder package on `main`).
 
 ### C. Embedding-model comparison + IC-naming-consistency metrics

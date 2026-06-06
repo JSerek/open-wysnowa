@@ -42,9 +42,9 @@ scripts/
   run_pipeline.py        # CLI: L0 + L1 + L1 metrics
   load_steam_reviews.py  # CSV → Document
   init_db.py
-  compare_runs.py        # cross-run JSON comparison (reads results JSON)
 tests/                   # L0–L1 + infra + test_l1_metrics.py
 docs/v2/                 # V2_FOUNDATION.md, V2_ROADMAP.md
+archived/v1/             # all v1 full-pipeline artifacts (docs, skills, scripts)
 ```
 
 Imports use explicit submodule paths (`from src.core.models import InitialCode`,

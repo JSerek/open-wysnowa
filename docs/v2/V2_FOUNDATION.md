@@ -125,8 +125,8 @@ model/prompt/embedding metadata for the leaderboard — see `V2_ROADMAP.md`.
 Canonical nested datasets (negative *Dying Light: The Beast* reviews, sorted by
 `votes_up` desc): `canonical_top{10,30,50,100}.csv` — 30 ⊂ 50 ⊂ 100.
 
-Distilled from `docs/testing/TEST_RUN_SUMMARY_*` and
-`docs/planning/STABILIZATION_TESTING_PLAN.md`:
+Distilled from `archived/v1/docs/testing/TEST_RUN_SUMMARY_*` and
+`archived/v1/docs/planning/STABILIZATION_TESTING_PLAN.md`:
 
 - **Saturation reached** by N=100 (ITS_final 0.029 🟢); N=50 still unsaturated
   (0.154 🔴). Evidence base grows then plateaus as expected.
