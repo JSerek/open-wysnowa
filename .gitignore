@@ -31,3 +31,6 @@ Thumbs.db
 
 # Results / exports (generated, not source)
 runs/
+
+# LinkedIn / marketing assets (not source)
+linkedin/
