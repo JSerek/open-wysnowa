@@ -35,7 +35,6 @@ from src.extraction.hil import (
     display_batch_summary,
     display_candidate_review,
     display_its_status,
-    display_meta_commentary_warning,
     prompt_decision,
     prompt_edit_candidate,
     prompt_saturation_checkpoint,
@@ -58,37 +57,6 @@ from src.extraction.prompts import build_ic_refinement_prompt
 from src.preprocessing import batch_segments
 
 logger = logging.getLogger(__name__)
-
-
-# ── Meta-IC Filtering ────────────────────────────────────────────────────────
-
-
-def is_meta_commentary(
-    candidate: ICCandidate,
-    name_patterns: List[str],
-    definition_signals: List[str],
-) -> Tuple[bool, str]:
-    """
-    Lightweight heuristic: does this IC describe a meta-level verdict
-    rather than a specific product experience?
-
-    Patterns are loaded from eqd_config.yaml → processing.meta_ic_filter.
-    Empty lists = no heuristic filtering (prompt rule #9 is the primary defense).
-
-    Returns (is_meta, reason). No LLM calls.
-    """
-    name_lower = candidate.ic_name.lower()
-    def_lower = candidate.definition.lower()
-
-    for pattern in name_patterns:
-        if pattern in name_lower:
-            return True, f"name_pattern:{pattern}"
-
-    for signal in definition_signals:
-        if signal in def_lower:
-            return True, f"definition_signal:{signal}"
-
-    return False, ""
 
 
 # ── ITS Tracker ──────────────────────────────────────────────────────────────
@@ -239,17 +207,14 @@ class Layer1Orchestrator:
         # IC creation tracking: {ic_id → segment_index} for breadth saturation
         self.ic_creation_segments: Dict[str, int] = {}
 
-        # Triage tracking: accumulate per-batch and overall
-        self.triage_stats: Dict[str, int] = {
-            "auto_new": 0,
-            "auto_merge": 0,
-            "grey_zone": 0,
+        # Decision-path tracking (v2: empty_codebook shortcut vs LLM judge).
+        # No operating thresholds → no auto_new/auto_merge paths anymore.
+        self.decision_paths: Dict[str, int] = {
             "empty_codebook": 0,
+            "llm": 0,
         }
         # Per-batch merge rates: [{batch_num, new_candidates, merges, batch_new}]
         self.batch_merge_rates: List[Dict[str, Any]] = []
-        # Grey-zone agreement tracking: [{max_sim, llm_rec, sim_direction}]
-        self.grey_zone_decisions: List[Dict[str, Any]] = []
 
     def run(
         self,
@@ -274,26 +239,23 @@ class Layer1Orchestrator:
             "total_batches": total_batches,
             "batches_processed": 0,
             "total_candidates": 0,
-            "existing_matches": 0,
             "new_ics_created": 0,
             "merged": 0,
             "rejected": 0,
             "quit_early": False,
-            # Drop rate tracking (candidates failing span validation in coder agent)
+            # Span-error tracking (candidates failing the Tier 1 grounding gate)
             "total_dropped": 0,
             "dropped_per_segment": {},  # {segment_id: n_dropped}
-            # Meta-IC filtering
-            "meta_filtered": 0,
-            "meta_flagged": 0,
             # Coder confidence — collected for new ICs only (not merges or rejects)
             "new_ic_confidences": [],
             # IDs of new ICs whose coder confidence fell below 0.6 — surfaced at sign-off
             "low_confidence_ic_ids": [],
-            # Coder reuse rate: tracks coder-codebook alignment
-            # coder_flagged_match: existing_code_match set → bypassed comparator, auto-merged
-            # coder_new_comp_new: coder said new → comparator confirmed NEW
-            # coder_new_comp_merge: coder said new → comparator flipped to MERGE
-            # coder_new_comp_reject: coder said new → rejected (HIL or auto)
+            # Coder reuse rate: tracks coder↔codebook alignment (logged signal only —
+            # existing_code_match no longer routes; every candidate goes to the judge).
+            # coder_flagged_match: coder set existing_code_match (recognised its own codebook)
+            # coder_new_comp_new:   coder said new → judge confirmed NEW
+            # coder_new_comp_merge: coder said new → judge flipped to MERGE
+            # coder_new_comp_reject: coder said new → judge rejected
             "coder_flagged_match": 0,
             "coder_new_comp_new": 0,
             "coder_new_comp_merge": 0,
@@ -314,10 +276,11 @@ class Layer1Orchestrator:
                 prev = summary["dropped_per_segment"].get(seg_id, 0)
                 summary["dropped_per_segment"][seg_id] = prev + n_dropped
 
-            # ── 2. Flatten and categorize candidates ──────────────────────
-            # (candidate, segment_id, canonical_text)
-            new_candidates: List[Tuple[ICCandidate, str, str]] = []
-            existing_matches: List[Tuple[ICCandidate, str, str]] = []
+            # ── 2. Flatten candidates (single decision track) ─────────────
+            # (candidate, segment_id, canonical_text). v2: NO existing-match
+            # shortcut — every candidate goes through the judge. existing_code_match
+            # is recorded as a logged signal only (coder_reuse matrix).
+            all_candidates: List[Tuple[ICCandidate, str, str]] = []
 
             # Track saturation: assign a segment_index to each segment
             segment_indices: Dict[str, int] = {}
@@ -330,28 +293,18 @@ class Layer1Orchestrator:
 
                 for cand in candidates:
                     if cand.existing_code_match is not None:
-                        existing_matches.append((cand, segment.id, segment.canonical_text))
-                    else:
-                        new_candidates.append((cand, segment.id, segment.canonical_text))
+                        # Logged signal: coder recognised its own codebook (does NOT route)
+                        summary["coder_flagged_match"] += 1
+                    all_candidates.append((cand, segment.id, segment.canonical_text))
 
-            # ── 3. Handle existing matches (skip comparator) ─────────────
-            # Collect quotes for batch embedding later
+            # ── 3. Pre-embed all candidate texts (1 batch API call) ───────
             deferred_quotes: List[VerbatimQuote] = []
-
-            for cand, seg_id, _ in existing_matches:
-                quote = self._apply_existing_match(cand, seg_id, defer_embed=True)
-                if quote:
-                    deferred_quotes.append(quote)
-                summary["existing_matches"] += 1
-                summary["coder_flagged_match"] += 1
-
-            # ── 4. Pre-embed all new candidate texts (1 batch API call) ──
             batch_new_count = 0
             precomputed_embeddings: List[List[float]] = []
 
-            if new_candidates:
+            if all_candidates:
                 candidate_texts = [
-                    f"{c.ic_name} | {c.definition}" for c, _, _ in new_candidates
+                    f"{c.ic_name} | {c.definition}" for c, _, _ in all_candidates
                 ]
                 logger.debug(
                     f"[EMBED] Batch-embedding {len(candidate_texts)} candidate texts"
@@ -360,13 +313,13 @@ class Layer1Orchestrator:
                     candidate_texts
                 )
 
-            # ── 5. Process new candidates through comparator + HIL ────────
-            if enable_hil and new_candidates:
+            # ── 4. Process every candidate through the judge + HIL ────────
+            if enable_hil and all_candidates:
                 its_history = self.its_tracker.history
                 latest_its = its_history[-1].its_value if its_history else None
                 display_batch_header(
                     batch_num, total_batches,
-                    self.ic_repo.count_active(), len(new_candidates),
+                    self.ic_repo.count_active(), len(all_candidates),
                     its_value=latest_its,
                     session_new=summary["new_ics_created"],
                     session_merged=summary["merged"],
@@ -376,56 +329,17 @@ class Layer1Orchestrator:
             batch_merge_count = 0
             last_undo_ctx: Optional[Dict] = None  # single-step undo context
 
-            for idx, (cand, seg_id, seg_text) in enumerate(new_candidates, 1):
-                # 5a. Run Codebook Comparator with precomputed embedding
+            for idx, (cand, seg_id, seg_text) in enumerate(all_candidates, 1):
+                # 4a. Run Codebook Comparator (judge) with precomputed embedding
                 cand_embedding = precomputed_embeddings[idx - 1] if precomputed_embeddings else None
-                comp_output, top_k, triage_meta = self.comparator.evaluate(
+                comp_output, top_k, decision_meta = self.comparator.evaluate(
                     cand, precomputed_embedding=cand_embedding
                 )
 
-                # Track triage path
-                triage_path = triage_meta.get("triage_path", "unknown")
-                if triage_path in self.triage_stats:
-                    self.triage_stats[triage_path] += 1
-
-                # Track grey-zone decisions for comparator agreement metric
-                if triage_path == "grey_zone":
-                    max_sim = triage_meta.get("max_sim", 0)
-                    llm_rec = triage_meta.get("llm_recommendation", "")
-                    # Similarity direction: if max_sim > midpoint → embedding says MERGE
-                    midpoint = (
-                        self.config.processing.auto_new_threshold +
-                        self.config.processing.auto_merge_threshold
-                    ) / 2
-                    sim_direction = "MERGE" if max_sim > midpoint else "NEW"
-                    self.grey_zone_decisions.append({
-                        "max_sim": max_sim,
-                        "llm_recommendation": llm_rec,
-                        "sim_direction": sim_direction,
-                    })
-
-                # ── Meta-IC filtering ─────────────────────────────────────
-                meta_cfg = self.config.processing.meta_ic_filter
-                is_meta = False
-                meta_reason = ""
-                if meta_cfg.enabled:
-                    is_meta, meta_reason = is_meta_commentary(
-                        cand,
-                        name_patterns=meta_cfg.name_patterns,
-                        definition_signals=meta_cfg.definition_signals,
-                    )
-                if is_meta:
-                    if not enable_hil:
-                        # Auto-reject
-                        self._apply_reject(cand, comp_output, f"meta-commentary-filtered: {meta_reason}")
-                        summary["meta_filtered"] += 1
-                        summary["rejected"] += 1
-                        logger.info(f"[META-FILTER] Auto-rejected '{cand.ic_name}' ({meta_reason})")
-                        continue  # skip to next candidate
-                    else:
-                        # Flag for human — display warning, then proceed to normal HIL
-                        display_meta_commentary_warning(cand, meta_reason)
-                        summary["meta_flagged"] += 1
+                # Track decision path (empty_codebook shortcut vs LLM judge)
+                decision_path = decision_meta.get("decision_path", "unknown")
+                if decision_path in self.decision_paths:
+                    self.decision_paths[decision_path] += 1
 
                 if enable_hil:
                     # Build ic_definitions for top-K display (on-demand, small N)
@@ -435,15 +349,15 @@ class Layer1Orchestrator:
                         if ic:
                             ic_defs[sim.ic_id] = ic.definition
 
-                    # 5b. Display for human review
+                    # 4b. Display for human review
                     display_candidate_review(
                         cand, comp_output, top_k, seg_text,
-                        idx, len(new_candidates),
+                        idx, len(all_candidates),
                         segment_id=seg_id,
                         ic_definitions=ic_defs,
                     )
 
-                    # 5c. Get human decision (may loop for edit or undo)
+                    # 4c. Get human decision (may loop for edit or undo)
                     undo_state = {
                         "ctx": last_undo_ctx,
                         "deferred_quotes": deferred_quotes,
@@ -451,7 +365,7 @@ class Layer1Orchestrator:
                     }
                     action, target_idx, notes = self._hil_loop(
                         cand, comp_output, top_k, seg_text,
-                        idx, len(new_candidates),
+                        idx, len(all_candidates),
                         seg_id=seg_id,
                         undo_state=undo_state,
                     )
@@ -467,7 +381,7 @@ class Layer1Orchestrator:
                     target_idx = 1 if action == "M" and top_k else None
                     notes = "auto-accepted (HIL disabled)"
 
-                # 5d. Apply decision (IC embed + persist happens immediately
+                # 4d. Apply decision (IC embed + persist happens immediately
                 #     for NEW so next candidate's comparator sees it;
                 #     quote embed is deferred)
                 result, quote, new_ic_id = self._apply_decision(
@@ -526,10 +440,32 @@ class Layer1Orchestrator:
                         "ic_id": None, "quote_id": None, "deferred_quote_ref": None,
                     }
 
-            # Record per-batch merge rate
+                # 4e. Full per-candidate traceability (Appendix B)
+                if self.reasoning_logger:
+                    self.reasoning_logger.log_candidate({
+                        "pass": 1,
+                        "segment_id": seg_id,
+                        "ic_name": cand.ic_name,
+                        "quote_text": cand.quote_text,
+                        "span_start": cand.span_start,
+                        "span_end": cand.span_end,
+                        "grounded": True,  # only grounded candidates reach the judge
+                        "coder_existing_code_match": cand.existing_code_match,
+                        "top_k": [
+                            {"ic_id": s.ic_id, "ic_name": s.ic_name,
+                             "sim": round(s.similarity, 4)}
+                            for s in top_k
+                        ],
+                        "decision_path": decision_path,
+                        "judge_verdict": comp_output.recommendation.value,
+                        "judge_reasoning": comp_output.reasoning,
+                        "final_action": result,
+                    })
+
+            # Record per-batch merge rate (denominator = all candidates judged)
             self.batch_merge_rates.append({
                 "batch_num": batch_num,
-                "new_candidates": len(new_candidates),
+                "new_candidates": len(all_candidates),
                 "merges": batch_merge_count,
                 "batch_new": batch_new_count,
             })
@@ -581,10 +517,9 @@ class Layer1Orchestrator:
         summary["ic_creation_segments"] = self.ic_creation_segments
         summary["total_segments"] = len(segments)
 
-        # Expose triage and comparator tracking for new metrics
-        summary["triage_stats"] = dict(self.triage_stats)
+        # Expose decision-path + merge tracking for metrics
+        summary["decision_paths"] = dict(self.decision_paths)
         summary["batch_merge_rates"] = list(self.batch_merge_rates)
-        summary["grey_zone_decisions"] = list(self.grey_zone_decisions)
 
         # IC stability scores from refinement
         summary["ic_stability_scores"] = getattr(self, "_ic_stability_scores", [])
@@ -898,67 +833,6 @@ class Layer1Orchestrator:
 
         logger.info(f"[IC:REJECT] {candidate.ic_name}")
 
-    def _apply_existing_match(
-        self,
-        candidate: ICCandidate,
-        segment_id: str,
-        defer_embed: bool = False,
-    ) -> Optional[VerbatimQuote]:
-        """
-        Handle a candidate that the Coder Agent matched to an existing IC.
-
-        Skips the comparator entirely — just adds the verbatim quote.
-
-        Returns: quote needing deferred embedding, or None.
-        """
-        # Find the existing IC by name.
-        # The coder occasionally returns matches with a number prefix and/or
-        # brackets, e.g. "24. [parkour_system_buggy_and_lacks_momentum]" or
-        # "6. graphics_positive_assessment". Strip these before looking up.
-        import re as _re
-        raw_match = candidate.existing_code_match or ""
-        clean_match = _re.sub(r"^\d+\.\s*", "", raw_match).strip().strip("[]")
-
-        codebook = self.ic_repo.get_all_active()
-        target_ic = None
-        for ic in codebook:
-            if ic.name == clean_match:
-                target_ic = ic
-                break
-
-        if not target_ic:
-            logger.warning(
-                f"Coder Agent matched '{candidate.ic_name}' to "
-                f"'{raw_match}' (cleaned: '{clean_match}') but IC not found in codebook. "
-                f"Skipping."
-            )
-            return None
-
-        # Create verbatim quote (propagate sentiment)
-        quote = VerbatimQuote(
-            ic_id=target_ic.id,
-            segment_id=segment_id,
-            quote_text=candidate.quote_text,
-            span_start=candidate.span_start,
-            span_end=candidate.span_end,
-            sentiment=candidate.sentiment.value if hasattr(candidate, 'sentiment') and candidate.sentiment else None,
-        )
-
-        segment = self.segment_repo.get_by_id(segment_id)
-        if segment:
-            quote.verify(segment.canonical_text)
-
-        if defer_embed:
-            self.quote_repo.insert(quote)
-        else:
-            quote = self.embedding_service.embed_quote(quote)
-            self.quote_repo.insert(quote)
-
-        logger.debug(
-            f"[IC:QUOTE] +quote to '{target_ic.name}' from seg {segment_id[:8]}"
-        )
-        return quote if defer_embed else None
-
     # ── IC Definition Refinement ──────────────────────────────────────────────
 
     def _refine_ic_definitions(self, min_quotes: int = 2) -> int:
@@ -1032,6 +906,20 @@ class Layer1Orchestrator:
 
                 old_def = ic.definition
                 ic.definition = refined_parsed.refined_definition
+
+                # Non-destructive (DESIGN_PRINCIPLES #5 / contract #15): log the
+                # pre-refinement definition before overwriting, so the original is
+                # always recoverable from the trace.
+                if self.reasoning_logger:
+                    self.reasoning_logger.log_record({
+                        "type": "ic_refinement",
+                        "ic_id": ic.id,
+                        "ic_name": ic.name,
+                        "original_definition": old_def,
+                        "refined_definition": refined_parsed.refined_definition,
+                        "change_summary": refined_parsed.change_summary,
+                        "quote_count": len(quotes),
+                    })
 
                 # Re-embed with updated definition
                 ic = self.embedding_service.embed_ic(ic)

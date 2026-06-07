@@ -44,8 +44,8 @@ def build_coder_system_prompt(codebook_context: str) -> str:
     Encodes Braun & Clarke thematic analysis methodology:
     - Inductive coding (data-driven, not theory-driven)
     - Stay close to the data
-    - Verbatim evidence with exact character spans
-    - Few-shot example for calibrating granularity and span accuracy
+    - Verbatim evidence (quote text only — the system computes offsets)
+    - Few-shot example for calibrating granularity
     """
     return f"""You are an expert qualitative coder performing inductive thematic analysis (Braun & Clarke, 2006).
 
@@ -53,22 +53,21 @@ YOUR TASK: Read a text segment and extract Initial Codes (ICs). Each IC captures
 
 METHODOLOGY PRINCIPLES:
 1. STAY CLOSE TO DATA — codes describe what the text explicitly says, not what it implies or what you infer. No interpretive leaps.
-2. EXACT VERBATIM QUOTES — every code MUST include an exact substring from the segment text. The quote_text must be a character-for-character match.
-3. CORRECT SPAN OFFSETS — span_start and span_end are 0-indexed character positions. The invariant is: segment_text[span_start:span_end] == quote_text. Getting this wrong is a critical error.
-4. MATCH EXISTING CODES — if the segment expresses a meaning already captured by an existing code in the codebook, set existing_code_match to that code's name. Do NOT create duplicates.
-5. PROPOSE NEW CODES — if the segment expresses a meaning NOT in the codebook, set existing_code_match to null. Give the new code a clear, descriptive name.
-6. DON'T FORCE CODES — if a segment (or part of it) has no analytically meaningful content, extract fewer codes or none. Quality over quantity.
-7. ONE QUOTE PER CODE — each ICCandidate gets exactly one verbatim quote. If multiple quotes support the same code, pick the most representative one.
-8. PREFER BROADER CODES — do NOT create separate codes for every sentence. Look for the broader meaning units. A single review with 5 complaints about different aspects of combat should yield 1-2 combat-related codes, not 5. Aim for 2-5 codes per segment. More than 7 is almost always over-coding.
-9. NO META-COMMENTARY — Do not extract codes about the overall verdict, the discourse around the product, or other reviewers' opinions. Codes must describe SPECIFIC aspects of the product experience. Bad: "biggest_disappointment_2025", "glowing_reviews_undeserved" Good: "combat_system_repetitive", "price_not_justified_for_content"
-10. SPECIFICITY MATCHES THE TEXT — Be as specific as the text allows, no more. If the segment identifies a specific system or feature, name it. If the segment expresses general dissatisfaction without identifying specific causes, create an IC that captures the general nature of the experience — never fabricate specifics that aren't in the text.
-11. ASSESS SENTIMENT — For each IC, assess the sentiment of the verbatim quote: positive, negative, neutral, or mixed. Sentiment is determined by what the quote expresses, not by the overall tone of the review. A negative review can contain positive quotes ("the graphics are great") and vice versa.
-12. ASSESS NOVELTY CONFIDENCE — Rate confidence (0.0–1.0) as: how certain are you that this concept is NOT already captured by any existing IC in the current codebook?
+2. EXACT VERBATIM QUOTES — every code MUST include a quote_text that is an EXACT, character-for-character substring of the segment. Copy it verbatim: do NOT paraphrase, fix typos, normalise whitespace, merge non-adjacent fragments, or insert ellipses (...). You do NOT provide character offsets — the system locates your quote in the text automatically. If the quote you write is not found verbatim, the code is discarded.
+3. MATCH EXISTING CODES — if the segment expresses a meaning already captured by an existing code in the codebook, set existing_code_match to that code's name. Do NOT create duplicates.
+4. PROPOSE NEW CODES — if the segment expresses a meaning NOT in the codebook, set existing_code_match to null. Give the new code a clear, descriptive name.
+5. DON'T FORCE CODES — if a segment (or part of it) has no analytically meaningful content, extract fewer codes or none. Quality over quantity.
+6. ONE QUOTE PER CODE — each candidate gets exactly one verbatim quote. If multiple quotes support the same code, pick the most representative one.
+7. PREFER BROADER CODES — do NOT create separate codes for every sentence. Look for the broader meaning units. A single review with 5 complaints about different aspects of combat should yield 1-2 combat-related codes, not 5. Aim for 2-5 codes per segment. More than 7 is almost always over-coding.
+8. NO META-COMMENTARY — Do not extract codes about the overall verdict, the discourse around the product, or other reviewers' opinions. Codes must describe SPECIFIC aspects of the product experience. Bad: "biggest_disappointment_2025", "glowing_reviews_undeserved" Good: "combat_system_repetitive", "price_not_justified_for_content"
+9. SPECIFICITY MATCHES THE TEXT — Be as specific as the text allows, no more. If the segment identifies a specific system or feature, name it. If the segment expresses general dissatisfaction without identifying specific causes, create an IC that captures the general nature of the experience — never fabricate specifics that aren't in the text.
+10. ASSESS SENTIMENT — For each IC, assess the sentiment of the verbatim quote: positive, negative, neutral, or mixed. Sentiment is determined by what the quote expresses, not by the overall tone of the review. A negative review can contain positive quotes ("the graphics are great") and vice versa.
+11. ASSESS NOVELTY CONFIDENCE — Rate confidence (0.0–1.0) as: how certain are you that this concept is NOT already captured by any existing IC in the current codebook?
     - 1.0 = Clearly new; no existing IC comes close
     - 0.7–0.9 = Probably new, but some thematic overlap with existing codes
     - 0.5 = Uncertain — could plausibly be merged with an existing code
     - 0.0–0.4 = Almost certainly overlapping with an existing IC
-    When the codebook is empty, default to 0.9. This measures novelty, NOT span accuracy (spans are validated separately).
+    When the codebook is empty, default to 0.9.
 
 IC NAMING CONVENTIONS:
 - Use lowercase_with_underscores (e.g., delivery_speed_complaint, product_quality_praise)
@@ -83,28 +82,24 @@ Good coding (4 codes — right granularity):
 1. ic_name: "combat_system_poor_quality"
    definition: "Player criticises combat as sluggish, unresponsive with broken hit detection and fragile weapons"
    quote_text: "The combat feels sluggish and unresponsive, weapons break way too fast, and the hit detection is completely broken"
-   span_start: 23, span_end: 134
    confidence: 0.9  # codebook empty → clearly new; specific system named
    sentiment: negative
 
 2. ic_name: "sequel_downgrade_from_predecessor"
    definition: "Player perceives the sequel as significantly worse than the original game"
    quote_text: "I loved the first game but this sequel is a massive downgrade"
-   span_start: 136, span_end: 196
    confidence: 0.75  # codebook has combat code; this is different but franchise comparison could overlap
    sentiment: negative
 
 3. ic_name: "graphics_positive_assessment"
    definition: "Player praises the visual quality as the only positive aspect"
    quote_text: "The only good thing is the graphics which are genuinely impressive"
-   span_start: 198, span_end: 263
    confidence: 0.9  # clearly distinct from combat/sequel codes
    sentiment: positive
 
 4. ic_name: "negative_purchase_recommendation"
    definition: "Player explicitly warns others against buying the game"
    quote_text: "Don't waste your money on this"
-   span_start: 265, span_end: 295
    confidence: 0.9  # clearly distinct; no purchase-advice code exists
    sentiment: negative
 
@@ -142,7 +137,7 @@ ERROR 4 — Over-coding micro-observations:
 
 OUTPUT: For the given segment, return a SegmentCodingResult with:
 - segment_id: the ID provided in the user prompt
-- candidates: list of ICCandidate objects, each including a sentiment field (positive/negative/neutral/mixed). May be empty if no meaningful codes found."""
+- candidates: list of code candidates, each with ic_name, definition, an exact verbatim quote_text, confidence, and sentiment (positive/negative/neutral/mixed). No character offsets. May be empty if no meaningful codes found."""
 
 
 
@@ -150,12 +145,12 @@ def build_coder_user_prompt(segment_id: str, canonical_text: str) -> str:
     """
     User prompt for the Coder Agent — single segment mode.
 
-    Includes the segment ID and full canonical text.
-    The canonical text is immutable — all spans must reference it exactly.
+    Includes the segment ID and full canonical text. Quotes must be copied
+    verbatim from this text — the system locates them; no offsets are needed.
     """
     return f"""Segment ID: {segment_id}
 
-SEGMENT TEXT (canonical, immutable — all span offsets reference this exact text):
+SEGMENT TEXT (copy any quote_text verbatim, character-for-character, from this exact text):
 ---
 {canonical_text}
 ---
@@ -164,57 +159,18 @@ Extract all Initial Codes from this segment. Return a SegmentCodingResult."""
 
 
 
-def build_coder_user_prompt_batch(
-    segments: List[Tuple[str, str]],
-) -> str:
-    """
-    User prompt for batch coding — multiple segments in one call.
-
-    segments: list of (segment_id, canonical_text) tuples.
-    Each segment is clearly delimited so the LLM knows which text
-    each span_start/span_end references.
-    """
-    lines = [
-        f"You have {len(segments)} segments to code.",
-        "Return a BatchCodingResult with one SegmentCodingResult per segment.",
-        "CRITICAL: Each segment's span offsets (span_start, span_end) reference ONLY that segment's text, NOT the full prompt.",
-        "",
-    ]
-
-    for i, (seg_id, text) in enumerate(segments, 1):
-        lines.append(f"SEGMENT {i} (ID: {seg_id}):")
-        lines.append("---")
-        lines.append(text)
-        lines.append("---")
-        lines.append("")
-
-    lines.append("Code ALL segments. Return a BatchCodingResult.")
-    return "\n".join(lines)
-
-
-
 # ── Codebook Comparator Prompts ──────────────────────────────────────────────
 
-def build_comparator_system_prompt(
-    auto_merge_threshold: float = 0.65,
-    auto_new_threshold: float = 0.55,
-) -> str:
+def build_comparator_system_prompt() -> str:
     """
-    System prompt for the Codebook Comparator.
+    System prompt for the Codebook Comparator (v2 — single decision track).
 
-    Focused task: compare a new IC candidate against similar existing ICs
-    and recommend an action.
-
-    Args:
-        auto_merge_threshold: triage similarity above which candidates are
-            auto-merged without LLM (from config.processing.auto_merge_threshold).
-        auto_new_threshold: triage similarity below which candidates are
-            auto-accepted as new without LLM (from config.processing.auto_new_threshold).
-        Only candidates whose top-1 similarity falls between these two values
-        reach this prompt.
+    Focused task: compare a new IC candidate against the most similar existing
+    ICs and recommend ONE action. In v2 there are no operating thresholds — every
+    candidate (against a non-empty codebook) is judged here by the LLM. The
+    embedding only supplies the top-k shortlist; the decision is the model's.
     """
-    midpoint = round((auto_merge_threshold + auto_new_threshold) / 2, 2)
-    return f"""You are a qualitative coding expert reviewing a new Initial Code (IC) candidate for inclusion in an evolving codebook.
+    return """You are a qualitative coding expert reviewing a new Initial Code (IC) candidate for inclusion in an evolving codebook.
 
 YOUR TASK: Compare the new candidate against the most similar existing codes and recommend ONE action.
 
@@ -223,17 +179,11 @@ RECOMMENDATIONS:
 - MERGE: The candidate is semantically equivalent to an existing code — same meaning, just different wording, or a meaningful specialisation that doesn't warrant a separate code. Specify which code to merge into via merge_target_name.
 - REJECT: The candidate is too vague, not grounded in data, or genuinely redundant with no added value.
 
-TRIAGE CONTEXT:
-This candidate reached you because its top-1 similarity to the nearest existing code
-falls in the grey zone ({auto_new_threshold}–{auto_merge_threshold}). Candidates above
-{auto_merge_threshold} were already auto-merged without LLM review; candidates below
-{auto_new_threshold} were already accepted as new. You are deciding the ambiguous middle.
-
-DECISION CRITERIA (calibrated to the similarity range you will actually see):
-- Similarity {midpoint}–{auto_merge_threshold}: lean toward MERGE — codes are very close;
-  merge unless you can articulate a clear, specific experiential distinction
-- Similarity {auto_new_threshold}–{midpoint}: genuine grey zone — read definitions carefully;
-  merge if the core experiential phenomenon overlaps, NEW if it extends meaningfully
+DECISION CRITERIA:
+- Merge only when the codes describe the SAME experiential phenomenon — same meaning
+  in different wording, or a specialisation that doesn't warrant its own code.
+- Keep NEW when the candidate extends meaningfully beyond every neighbour, even if it
+  shares vocabulary or domain with them.
 - Consider: do the codes describe the SAME experience from DIFFERENT angles, or DIFFERENT
   experiences that happen to share vocabulary?
 

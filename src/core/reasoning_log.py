@@ -184,6 +184,37 @@ class ReasoningLogger:
         if context:
             entry.update(context)
 
+        self._write(entry)
+
+    def log_record(self, record: dict) -> None:
+        """
+        Write an arbitrary structured record to the trace file.
+
+        Used for process-level traceability (per-candidate decisions, IC-definition
+        refinement) that is not tied to a single raw LLM completion. The record is
+        written verbatim with run_id + timestamp prepended. Always written
+        regardless of log mode — these records are the audit trail (contract #2),
+        not raw reasoning summaries.
+        """
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "run_id": self.run_id,
+            **record,
+        }
+        self._write(entry)
+
+    def log_candidate(self, record: dict) -> None:
+        """
+        Write a per-candidate decision trace (Appendix B).
+
+        Expected keys: pass, segment_id, quote_text, span_start, span_end,
+        grounded, coder_existing_code_match, top_k, judge_verdict,
+        judge_reasoning, final_action.
+        """
+        self.log_record({"type": "candidate", **record})
+
+    def _write(self, entry: dict) -> None:
+        """Append one JSON object as a line to the trace file (never raises)."""
         try:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")

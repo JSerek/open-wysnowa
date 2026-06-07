@@ -49,16 +49,10 @@ class TestLoadConfig:
         config = load_config(CONFIG_PATH)
         assert config.processing.batch_size == 10
         assert config.processing.its_saturation_threshold == 0.02
-        # v2 L1 thresholds
-        assert config.processing.auto_new_threshold == 0.55
-        assert config.processing.auto_merge_threshold == 0.65
-
-    def test_meta_ic_filter_config(self):
-        config = load_config(CONFIG_PATH)
-        meta = config.processing.meta_ic_filter
-        assert meta.enabled is True
-        assert isinstance(meta.name_patterns, list)
-        assert isinstance(meta.definition_signals, list)
+        # v2 Phase 1: single decision track, 1 review = 1 call, no thresholds
+        assert config.processing.segments_per_coder_call == 1
+        assert not hasattr(config.processing, "auto_new_threshold")
+        assert not hasattr(config.processing, "meta_ic_filter")
 
     def test_study_config(self):
         config = load_config(CONFIG_PATH)

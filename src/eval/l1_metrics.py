@@ -8,13 +8,18 @@ the full pipeline (see the `v1-full-pipeline` tag).
 DATA INTEGRITY:
   - Grounding — are all verbatim quotes verifiable against canonical text?
   - Extraction Density — character-level segment coverage by IC quotes
-    (+ Candidate Drop Rate — candidates rejected by span validation)
+    (+ Candidate Drop Rate — candidates rejected by the grounding gate)
+  - Quote Hallucination Rate — fraction of candidates whose quote was not a
+    verbatim substring (v2 leaderboard axis; offsets are computed by the system,
+    so the only quote failure is hallucinated/non-verbatim text)
 
 CODEBOOK HEALTH:
   - IC Concentration — evidence distribution across ICs (singleton ratio)
   - Merge Rate Over Time — per-batch merge/candidate ratio
-  - Triage Efficiency — auto-decisions / total new candidates
-  - Comparator Agreement — LLM vs embedding alignment in grey zone
+
+(Triage Efficiency and Comparator Agreement were removed in the v2 raw-measurement
+pivot — there are no operating thresholds left to characterise; embedding quality
+is assessed threshold-free via AUC in Phase 3.)
 
 SATURATION / EVIDENCE:
   - ITS — Incremental Type Saturation curve across batches (passed in)
@@ -83,11 +88,9 @@ class L1MetricsEngine:
         Args:
             its_history: ITS tracking data from Layer 1 (optional, for display)
             **kwargs: additional context from the orchestrator:
-                - triage_stats: Dict[str, int] — auto_new/auto_merge/grey_zone counts
                 - batch_merge_rates: List[Dict] — per-batch merge data
-                - grey_zone_decisions: List[Dict] — LLM vs embedding agreement data
-                - total_dropped: int — candidates dropped by span validation
-                - total_candidates: int — valid candidates processed by comparator
+                - total_dropped: int — candidates dropped by the grounding gate
+                - total_candidates: int — valid candidates processed by the judge
                 - dropped_per_segment: Dict[str, int] — {segment_id: n_dropped}
                 - new_ic_confidences: List[float] — novelty confidence of new ICs
                 - coder_flagged_match / coder_new_comp_* : int — coder↔comparator matrix
@@ -107,17 +110,15 @@ class L1MetricsEngine:
             total_valid_candidates=total_candidates,
             dropped_per_segment=dropped_per_segment,
         )
+        results["quote_hallucination_rate"] = self.compute_quote_hallucination_rate(
+            total_dropped=total_dropped,
+            total_valid_candidates=total_candidates,
+        )
 
         # ── CODEBOOK HEALTH ───────────────────────────────────────────────
         results["ic_concentration"] = self.compute_ic_concentration()
         results["merge_rate"] = self.compute_merge_rate(
             kwargs.get("batch_merge_rates", [])
-        )
-        results["triage_efficiency"] = self.compute_triage_efficiency(
-            kwargs.get("triage_stats", {})
-        )
-        results["comparator_agreement"] = self.compute_comparator_agreement(
-            kwargs.get("grey_zone_decisions", [])
         )
 
         # ── SATURATION / EVIDENCE ─────────────────────────────────────────
@@ -261,7 +262,10 @@ class L1MetricsEngine:
         captured by IC quotes (character-level).
 
         Also computes candidate drop rate: proportion of LLM-proposed candidates
-        dropped due to span validation failure (all 3 tiers failed).
+        dropped by the grounding gate (quote not a verbatim substring). In v2 the
+        grounding gate is the only drop path (no silent auto-repair), so this
+        equals quote_hallucination_rate; it is kept for continuity and reported
+        here alongside density.
 
         Args:
             total_dropped: candidates dropped across all batches (from orchestrator)
@@ -515,106 +519,43 @@ class L1MetricsEngine:
         )
         return result
 
-    def compute_triage_efficiency(
-        self, triage_stats: Dict[str, int]
+    def compute_quote_hallucination_rate(
+        self,
+        total_dropped: int = 0,
+        total_valid_candidates: int = 0,
     ) -> Dict[str, Any]:
         """
-        Triage Efficiency: fraction of decisions made without LLM.
+        Quote Hallucination Rate (v2 Phase 1): raw faithfulness of the evidence.
 
-        Formula: (auto_new + auto_merge) / (auto_new + auto_merge + grey_zone)
-        Excludes empty_codebook (trivial, doesn't reflect threshold quality).
+        Formula: hallucinated / (grounded_candidates + hallucinated)
 
-        Interpretation:
-        - >0.7 = thresholds well-tuned, most decisions are clear-cut
-        - 0.3-0.7 = healthy grey zone, LLM adds value
-        - <0.3 = thresholds too narrow, LLM called for almost everything
+        Spans are computed by the system (the model never emits offsets), so the
+        only way a quote can fail is by not being a verbatim substring of the
+        canonical text — i.e. the model invented/altered characters, words, or
+        merged non-adjacent fragments. Every such candidate is dropped and counts
+        against the model.
+
+        Direction: less = better. In Phase 1 this coincides numerically with
+        candidate_drop_rate (the grounding gate is the only drop path); it is the
+        explicit, named faithfulness signal the leaderboard ranks on.
         """
-        auto_new = triage_stats.get("auto_new", 0)
-        auto_merge = triage_stats.get("auto_merge", 0)
-        grey_zone = triage_stats.get("grey_zone", 0)
-        empty_codebook = triage_stats.get("empty_codebook", 0)
+        total_raw = total_valid_candidates + total_dropped
+        rate = total_dropped / total_raw if total_raw > 0 else 0.0
 
-        auto_total = auto_new + auto_merge
-        non_trivial = auto_total + grey_zone  # excludes empty_codebook
-        efficiency = auto_total / non_trivial if non_trivial > 0 else 0.0
+        if total_raw > 0:
+            self.qm_repo.insert(QualityMetric(
+                metric_type=MetricType.QUOTE_HALLUCINATION_RATE,
+                value=rate,
+            ))
 
-        self.qm_repo.insert(QualityMetric(
-            metric_type=MetricType.TRIAGE_EFFICIENCY,
-            value=efficiency,
-        ))
-
-        result = {
-            "efficiency": round(efficiency, 3),
-            "auto_new": auto_new,
-            "auto_merge": auto_merge,
-            "grey_zone": grey_zone,
-            "empty_codebook": empty_codebook,
-            "llm_calls_saved": auto_total,
-            "total_non_trivial": non_trivial,
-        }
         logger.info(
-            f"Triage efficiency: {auto_total}/{non_trivial} auto-decided "
-            f"({efficiency:.1%}), {grey_zone} LLM calls"
+            f"Quote hallucination rate: {rate:.1%} ({total_dropped}/{total_raw} candidates)"
         )
-        return result
-
-    def compute_comparator_agreement(
-        self, grey_zone_decisions: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Comparator Agreement Rate: LLM vs embedding alignment in grey zone.
-
-        For each grey-zone decision, compare:
-        - sim_direction: based on max_sim vs midpoint → "NEW" or "MERGE"
-        - llm_recommendation: what the LLM actually decided
-
-        Agreement = both say NEW or both say MERGE.
-
-        Interpretation:
-        - >0.8 = embeddings and LLM aligned, triage could be more aggressive
-        - 0.5-0.8 = healthy disagreement, LLM catching nuances
-        - <0.5 = embeddings and LLM systematically disagree, check thresholds
-        """
-        if not grey_zone_decisions:
-            return {"agreement_rate": 0.0, "total_grey_zone": 0,
-                    "agreed": 0, "disagreed": 0}
-
-        agreed = 0
-        disagreed = 0
-
-        for decision in grey_zone_decisions:
-            sim_dir = decision.get("sim_direction", "")
-            llm_rec = decision.get("llm_recommendation", "")
-
-            if llm_rec in ("NEW", "REJECT"):
-                llm_dir = "NEW"
-            else:  # MERGE
-                llm_dir = "MERGE"
-
-            if sim_dir == llm_dir:
-                agreed += 1
-            else:
-                disagreed += 1
-
-        total = agreed + disagreed
-        rate = agreed / total if total > 0 else 0.0
-
-        self.qm_repo.insert(QualityMetric(
-            metric_type=MetricType.COMPARATOR_AGREEMENT,
-            value=rate,
-        ))
-
-        result = {
-            "agreement_rate": round(rate, 3),
-            "total_grey_zone": total,
-            "agreed": agreed,
-            "disagreed": disagreed,
+        return {
+            "quote_hallucination_rate": round(rate, 4),
+            "hallucinated": total_dropped,
+            "total_raw_candidates": total_raw,
         }
-        logger.info(
-            f"Comparator agreement: {agreed}/{total} "
-            f"({rate:.1%} LLM agrees with embedding direction)"
-        )
-        return result
 
     def compute_cross_review_convergence(self) -> Dict[str, Any]:
         """

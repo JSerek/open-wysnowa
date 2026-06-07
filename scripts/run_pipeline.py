@@ -47,6 +47,12 @@ def main():
                         help="Path to eqd_config.yaml (default: auto-detect)")
     parser.add_argument("--no-hil", action="store_true",
                         help="Run without human-in-the-loop (auto-accept codebook)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Run seed, recorded in the run manifest (best-effort determinism)")
+    parser.add_argument("--k-index", type=int, default=0,
+                        help="Repetition index for this run (variance under k>1)")
+    parser.add_argument("--leaderboard-db", type=str, default="runs/leaderboard.db",
+                        help="Central run registry DB (default: runs/leaderboard.db)")
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         default="INFO", help="Logging level (default: INFO)")
     parser.add_argument("--save-results", type=str, default=None,
@@ -105,8 +111,14 @@ def main():
         print("No reviews loaded. Check your CSV path and filters.")
         sys.exit(1)
 
-    pipeline = EQDPipeline(config_path=config_path, db_path=db_path)
-    results = pipeline.run(docs, enable_hil=enable_hil)
+    pipeline = EQDPipeline(
+        config_path=config_path,
+        db_path=db_path,
+        seed=args.seed,
+        k_repeat_index=args.k_index,
+        leaderboard_db_path=args.leaderboard_db,
+    )
+    results = pipeline.run(docs, enable_hil=enable_hil, dataset_path=args.csv_path)
 
     _print_summary(results, db_path)
 
@@ -174,21 +186,17 @@ def _print_summary(results, db_path):
               f"mean_quotes/IC={ic_conc.get('mean_quotes_per_ic', 0):.1f} "
               f"range=[{dist.get('min', 0)}-{dist.get('max', 0)}]")
 
+    hall = l3.get("quote_hallucination_rate", {})
+    if hall and hall.get("total_raw_candidates", 0) > 0:
+        rate = hall.get("quote_hallucination_rate", 0)
+        flag = "⚠ " if rate > 0.10 else ""
+        print(f"  {flag}Quote hallucination rate: {rate:.1%} "
+              f"({hall.get('hallucinated', 0)}/{hall.get('total_raw_candidates', 0)})")
+
     merge = l3.get("merge_rate", {})
     if merge and merge.get("total_candidates", 0) > 0:
         print(f"  Merge rate:   {merge.get('overall_rate', 0):.1%} "
               f"({merge.get('total_merges', 0)}/{merge.get('total_candidates', 0)})")
-
-    triage = l3.get("triage_efficiency", {})
-    if triage and triage.get("total_non_trivial", 0) > 0:
-        print(f"  Triage eff:   {triage.get('efficiency', 0):.1%} auto-decided "
-              f"(auto_new={triage.get('auto_new', 0)} auto_merge={triage.get('auto_merge', 0)} "
-              f"grey_zone={triage.get('grey_zone', 0)})")
-
-    comp = l3.get("comparator_agreement", {})
-    if comp and comp.get("total_grey_zone", 0) > 0:
-        print(f"  Comparator:   {comp.get('agreement_rate', 0):.1%} LLM-embedding agreement "
-              f"({comp.get('agreed', 0)}/{comp.get('total_grey_zone', 0)})")
 
     conv = l3.get("cross_review_convergence", {})
     if conv and conv.get("mean_docs_per_ic", 0) > 0:

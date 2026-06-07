@@ -67,18 +67,20 @@ class CodebookComparator:
         """
         Evaluate a new IC candidate against the existing codebook.
 
-        Returns: (ComparatorOutput, top_k_similar_results, triage_meta)
-            triage_meta: {
-                "triage_path": "empty_codebook" | "auto_new" | "auto_merge" | "grey_zone",
-                "max_sim": float | None,
-                "llm_recommendation": str | None,  # only for grey_zone
+        v2 single decision track (contract #5/#6): no operating thresholds. The
+        embedding only supplies the top-k shortlist (ranking, no auto-decisions);
+        the LLM judge decides NEW/MERGE/REJECT for EVERY candidate. The one
+        allowed shortcut is an empty codebook (nothing to compare against → NEW).
+
+        Returns: (ComparatorOutput, top_k_similar_results, meta)
+            meta: {
+                "decision_path": "empty_codebook" | "llm",
+                "max_sim": float | None,        # top-1 cosine, for Phase-3 AUC
+                "llm_recommendation": str | None,
             }
 
         If precomputed_embedding is provided, skip the embed step (batch
         optimization — orchestrator pre-embeds all candidates in one call).
-
-        If the codebook is empty (first batch), returns NEW immediately
-        without calling the LLM — no comparison possible.
         """
         # 1. Embed candidate (skip if pre-computed)
         if precomputed_embedding is not None:
@@ -87,63 +89,26 @@ class CodebookComparator:
             candidate_text = f"{candidate.ic_name} | {candidate.definition}"
             candidate_embedding = self.embedding_service.embed_text(candidate_text)
 
-        # 2. Find top-K similar existing ICs
+        # 2. Find top-K similar existing ICs (ranking only — no thresholds)
         top_k_results = self.embedding_service.find_similar_ics(
             embedding=candidate_embedding,
             top_k=self.top_k,
         )
 
-        # 3. Empty codebook → immediate NEW (no LLM call needed)
+        # 3. Empty codebook → immediate NEW (only allowed shortcut)
         if not top_k_results:
-            logger.debug(f"[TRIAGE] Codebook empty — '{candidate.ic_name}' → NEW")
+            logger.debug(f"[JUDGE] Codebook empty — '{candidate.ic_name}' → NEW")
             output = ComparatorOutput(
                 recommendation=ComparatorRecommendation.NEW,
                 reasoning="Codebook is empty; this is the first code.",
             )
-            meta = {"triage_path": "empty_codebook", "max_sim": None, "llm_recommendation": None}
+            meta = {"decision_path": "empty_codebook", "max_sim": None, "llm_recommendation": None}
             return output, top_k_results, meta
 
-        # 4. Embedding-first triage — skip LLM for clear-cut cases
+        # 4. Always call the LLM judge for a non-empty codebook
         max_sim = top_k_results[0].similarity
-        auto_new_thresh = self.config.processing.auto_new_threshold
-        auto_merge_thresh = self.config.processing.auto_merge_threshold
-
-        if max_sim < auto_new_thresh:
-            logger.info(
-                f"[TRIAGE] Auto-NEW: '{candidate.ic_name}' "
-                f"(max_sim={max_sim:.3f} < {auto_new_thresh})"
-            )
-            output = ComparatorOutput(
-                recommendation=ComparatorRecommendation.NEW,
-                reasoning=(
-                    f"Auto-triage: similarity to nearest code too low "
-                    f"({max_sim:.3f} < {auto_new_thresh}); clearly novel."
-                ),
-            )
-            meta = {"triage_path": "auto_new", "max_sim": max_sim, "llm_recommendation": None}
-            return output, top_k_results, meta
-
-        if max_sim > auto_merge_thresh:
-            merge_target = top_k_results[0]
-            logger.info(
-                f"[TRIAGE] Auto-MERGE: '{candidate.ic_name}' → '{merge_target.ic_name}' "
-                f"(max_sim={max_sim:.3f} > {auto_merge_thresh})"
-            )
-            output = ComparatorOutput(
-                recommendation=ComparatorRecommendation.MERGE,
-                merge_target_name=merge_target.ic_name,
-                reasoning=(
-                    f"Auto-triage: similarity to '{merge_target.ic_name}' very high "
-                    f"({max_sim:.3f} > {auto_merge_thresh}); semantically equivalent."
-                ),
-            )
-            meta = {"triage_path": "auto_merge", "max_sim": max_sim, "llm_recommendation": None}
-            return output, top_k_results, meta
-
-        # 5. Grey zone — call LLM for nuanced reasoning
         logger.info(
-            f"[TRIAGE] Grey zone: '{candidate.ic_name}' "
-            f"(max_sim={max_sim:.3f}) → LLM comparator"
+            f"[JUDGE] '{candidate.ic_name}' (max_sim={max_sim:.3f}) → LLM judge"
         )
 
         ic_repo = InitialCodeRepo(self.db)
@@ -168,7 +133,7 @@ class CodebookComparator:
             )
 
         meta = {
-            "triage_path": "grey_zone",
+            "decision_path": "llm",
             "max_sim": max_sim,
             "llm_recommendation": output.recommendation.value,
         }
@@ -184,10 +149,7 @@ class CodebookComparator:
 
         Uses instructor for structured output → ComparatorOutput.
         """
-        system_prompt = build_comparator_system_prompt(
-            auto_merge_threshold=self.config.processing.auto_merge_threshold,
-            auto_new_threshold=self.config.processing.auto_new_threshold,
-        )
+        system_prompt = build_comparator_system_prompt()
         user_prompt = build_comparator_user_prompt(
             candidate_name=candidate.ic_name,
             candidate_definition=candidate.definition,

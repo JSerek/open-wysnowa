@@ -52,36 +52,16 @@ class TestMergeSpans:
         assert L1MetricsEngine._merge_spans([(0, 2), (5, 9)]) == 6
 
 
-class TestTriageEfficiency:
-    def test_excludes_empty_codebook(self, engine):
-        r = engine.compute_triage_efficiency(
-            {"auto_new": 3, "auto_merge": 2, "grey_zone": 5, "empty_codebook": 1}
-        )
-        assert r["efficiency"] == 0.5          # (3+2) / (3+2+5)
-        assert r["llm_calls_saved"] == 5
-        assert r["total_non_trivial"] == 10
+class TestQuoteHallucinationRate:
+    def test_rate(self, engine):
+        r = engine.compute_quote_hallucination_rate(total_dropped=2, total_valid_candidates=8)
+        assert r["quote_hallucination_rate"] == 0.2          # 2 / (8+2)
+        assert r["hallucinated"] == 2
+        assert r["total_raw_candidates"] == 10
 
-    def test_empty_stats(self, engine):
-        r = engine.compute_triage_efficiency({})
-        assert r["efficiency"] == 0.0
-
-
-class TestComparatorAgreement:
-    def test_reject_counts_as_new_direction(self, engine):
-        decisions = [
-            {"sim_direction": "NEW", "llm_recommendation": "NEW"},      # agree
-            {"sim_direction": "MERGE", "llm_recommendation": "NEW"},    # disagree
-            {"sim_direction": "NEW", "llm_recommendation": "REJECT"},   # agree (REJECT->NEW)
-            {"sim_direction": "MERGE", "llm_recommendation": "MERGE"},  # agree
-        ]
-        r = engine.compute_comparator_agreement(decisions)
-        assert r["agreed"] == 3
-        assert r["disagreed"] == 1
-        assert r["agreement_rate"] == 0.75
-
-    def test_empty(self, engine):
-        r = engine.compute_comparator_agreement([])
-        assert r["agreement_rate"] == 0.0
+    def test_no_candidates(self, engine):
+        r = engine.compute_quote_hallucination_rate(total_dropped=0, total_valid_candidates=0)
+        assert r["quote_hallucination_rate"] == 0.0
 
 
 class TestMergeRate:
@@ -161,13 +141,13 @@ class TestComputeAll:
         engine = L1MetricsEngine(populated_db)
         r = engine.compute_all(
             its_history=[],
-            triage_stats={"auto_new": 1, "auto_merge": 1, "grey_zone": 0},
+            total_dropped=1,
+            total_candidates=5,
             new_ic_confidences=[0.7, 0.9],
         )
         for key in [
-            "grounding", "extraction_density", "ic_concentration", "merge_rate",
-            "triage_efficiency", "comparator_agreement", "its_history",
-            "cross_review_convergence", "coder_confidence", "quote_coverage",
-            "coder_reuse",
+            "grounding", "extraction_density", "quote_hallucination_rate", "ic_concentration",
+            "merge_rate", "its_history", "cross_review_convergence",
+            "coder_confidence", "quote_coverage", "coder_reuse",
         ]:
             assert key in r

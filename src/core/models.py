@@ -51,6 +51,7 @@ class MetricType(str, Enum):
     CROSS_THEME_IC_SHARING = "cross_theme_ic_sharing"
     COHERENCE_NORMALIZED = "coherence_normalized"
     CANDIDATE_DROP_RATE = "candidate_drop_rate"
+    QUOTE_HALLUCINATION_RATE = "quote_hallucination_rate"
     THEMATIC_COVERAGE = "thematic_coverage"
     CROSS_REVIEW_CONVERGENCE = "cross_review_convergence"
     IC_STABILITY = "ic_stability"
@@ -271,12 +272,14 @@ class Sentiment(str, Enum):
     MIXED = "mixed"
 
 
-class ICCandidate(BaseModel):
+class RawICCandidate(BaseModel):
     """
-    Single IC candidate extracted by the Coder Agent from a segment.
+    LLM-facing IC candidate — the raw extraction output (NO character offsets).
 
-    The LLM outputs a list of these per segment. Each must include
-    an exact verbatim quote with character-level span offsets.
+    The model produces only the verbatim quote text; the system locates that text
+    in the canonical segment and computes the span deterministically (LLMs cannot
+    count character offsets — empirically ~93% wrong, see Phase 1 finding). A quote
+    that is not a verbatim substring is treated as a hallucination and dropped.
     """
     ic_name: str = Field(
         min_length=1,
@@ -298,17 +301,11 @@ class ICCandidate(BaseModel):
     )
     quote_text: str = Field(
         min_length=1,
-        description="Exact substring of canonical_text — copy verbatim, no paraphrasing",
-    )
-    span_start: int = Field(
-        ge=0,
-        description="Character offset of the start of quote_text in canonical_text (0-indexed, inclusive)",
-    )
-    span_end: int = Field(
-        ge=1,
         description=(
-            "Character offset of the end of quote_text in canonical_text (exclusive). "
-            "Must satisfy: canonical_text[span_start:span_end] == quote_text exactly."
+            "An EXACT, character-for-character substring of the segment text. "
+            "Copy it verbatim: do not paraphrase, fix typos, normalise whitespace, "
+            "merge non-adjacent fragments, or insert ellipses. Do NOT provide "
+            "character offsets — the system locates the quote for you."
         ),
     )
     confidence: float = Field(
@@ -332,6 +329,34 @@ class ICCandidate(BaseModel):
         description="Name of matching existing IC, or null if proposing new code",
     )
 
+
+class ICCandidate(BaseModel):
+    """
+    Grounded IC candidate — domain object carried through L1.
+
+    Built by the Coder Agent from a RawICCandidate after the quote text has been
+    located in the canonical segment: span_start/span_end are computed by the
+    system (canonical_text[span_start:span_end] == quote_text always holds), never
+    produced by the LLM.
+    """
+    ic_name: str = Field(min_length=1, max_length=120)
+    definition: str = Field(min_length=5, max_length=600)
+    quote_text: str = Field(
+        min_length=1,
+        description="Exact substring of canonical_text (verbatim)",
+    )
+    span_start: int = Field(
+        ge=0,
+        description="System-computed start offset of quote_text in canonical_text (0-indexed, inclusive)",
+    )
+    span_end: int = Field(
+        ge=1,
+        description="System-computed end offset (exclusive): canonical_text[span_start:span_end] == quote_text",
+    )
+    confidence: float = Field(ge=0.0, le=1.0)
+    sentiment: Optional[Sentiment] = Field(default=None)
+    existing_code_match: Optional[str] = Field(default=None)
+
     @field_validator("span_end")
     @classmethod
     def end_after_start(cls, v: int, info) -> int:
@@ -345,21 +370,11 @@ class SegmentCodingResult(BaseModel):
     """
     Instructor response wrapper: Coder Agent output for one segment.
 
-    Used as response_model in the instructor call (single-segment mode).
+    Used as response_model in the instructor call. Carries RawICCandidates
+    (no offsets) — the coder grounds them into ICCandidates afterwards.
     """
     segment_id: str
-    candidates: List[ICCandidate] = Field(default_factory=list)
-
-
-class BatchCodingResult(BaseModel):
-    """
-    Multi-segment coding result: Coder Agent output for N segments.
-
-    Used as response_model when segments_per_coder_call > 1.
-    Each SegmentCodingResult carries its segment_id so we can map
-    candidates back to their source segment for span validation.
-    """
-    segment_results: List[SegmentCodingResult] = Field(default_factory=list)
+    candidates: List[RawICCandidate] = Field(default_factory=list)
 
 
 class ComparatorRecommendation(str, Enum):

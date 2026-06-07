@@ -34,10 +34,11 @@ class TestBuildCoderPrompts:
         prompt = build_coder_system_prompt("(Empty codebook)")
         assert "STAY CLOSE TO DATA" in prompt
         assert "EXACT VERBATIM QUOTES" in prompt
-        assert "CORRECT SPAN OFFSETS" in prompt
         assert "DON'T FORCE CODES" in prompt
-        assert "span_start" in prompt
-        assert "span_end" in prompt
+        # v2: the model never produces offsets — the system computes them
+        assert "span_start" not in prompt
+        assert "span_end" not in prompt
+        assert "do NOT provide character offsets" in prompt.lower() or "no character offsets" in prompt.lower()
 
     def test_system_prompt_includes_codebook(self, sample_ics):
         context = build_codebook_context(sample_ics)
@@ -48,7 +49,7 @@ class TestBuildCoderPrompts:
         prompt = build_coder_user_prompt("seg_123", "This is the text to code.")
         assert "seg_123" in prompt
         assert "This is the text to code." in prompt
-        assert "canonical" in prompt.lower()
+        assert "verbatim" in prompt.lower()
 
 
 class TestBuildComparatorPrompts:
@@ -58,8 +59,9 @@ class TestBuildComparatorPrompts:
         assert "MERGE" in prompt
         assert "REJECT" in prompt
         assert "SUBCODE" not in prompt  # SUBCODE removed in favour of MERGE
-        # Threshold guidance uses actual triage thresholds (0.55/0.65), not old stale values (0.85/0.70)
-        assert "0.65" in prompt or "0.55" in prompt  # updated 2026-03-04: calibrated to real grey zone
+        # v2: no operating thresholds — the judge decides every candidate from text
+        assert "grey zone" not in prompt.lower()
+        assert "auto-merge" not in prompt.lower()
 
     def test_user_prompt_with_top_k(self):
         top_k = [

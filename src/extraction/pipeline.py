@@ -15,12 +15,14 @@ analyst brief (L4) were shelved in the v2 pivot — recover them from the
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.core.config import load_config
+from src.core.config import EQDConfig, load_config
 from src.core.db import Database
 from src.core.embeddings import EmbeddingService
 from src.core.models import Document
@@ -28,10 +30,45 @@ from src.core.reasoning_log import ReasoningLogger
 from src.eval.l1_metrics import L1MetricsEngine
 from src.extraction.codebook_signoff import CodebookSignoff
 from src.extraction.orchestrator import Layer1Orchestrator
+from src.extraction.prompts import (
+    build_comparator_system_prompt,
+    build_coder_system_prompt,
+)
 from src.core.config import ModelClient
+from src.leaderboard.registry import RunManifest, RunRegistry
 from src.preprocessing import preprocess_documents
 
 logger = logging.getLogger(__name__)
+
+
+# Metric direction map (Appendix A): "more" = higher is better, "less" = lower is
+# better, "" = descriptive (no inherent direction).
+_METRIC_DIRECTIONS: Dict[str, str] = {
+    "grounding_rate": "more",
+    "extraction_density_mean": "",
+    "candidate_drop_rate": "less",
+    "quote_hallucination_rate": "less",
+    "singleton_ratio": "",
+    "merge_rate": "",
+    "mean_coder_confidence": "",
+    "cross_review_convergence": "more",
+}
+
+
+def _git_sha() -> Optional[str]:
+    """Best-effort short git SHA of the working tree (None if unavailable)."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() or None if out.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class EQDPipeline:
@@ -45,8 +82,18 @@ class EQDPipeline:
         self,
         config_path: Optional[Path] = None,
         db_path: str = "eqa_ai.db",
+        config: Optional[EQDConfig] = None,
+        seed: Optional[int] = None,
+        k_repeat_index: int = 0,
+        leaderboard_db_path: Optional[str] = "runs/leaderboard.db",
     ):
-        self.config = load_config(config_path)
+        # Accept a ready-made Config (leaderboard harness overrides model ids
+        # programmatically) or load from disk. Explicit config wins over path.
+        self.config = config if config is not None else load_config(config_path)
+        self.db_path = db_path
+        self.seed = seed
+        self.k_repeat_index = k_repeat_index
+        self.leaderboard_db_path = leaderboard_db_path
 
         self.db = Database(db_path)
         self.db.init_schema()
@@ -75,6 +122,7 @@ class EQDPipeline:
         self,
         documents: List[Document],
         enable_hil: bool = True,
+        dataset_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Run the evidence-extraction pipeline (L0 → L1 → L1 metrics).
@@ -82,6 +130,8 @@ class EQDPipeline:
         Args:
             documents: raw Document objects to analyse
             enable_hil: if True, interactive codebook sign-off after L1
+            dataset_path: source dataset path (for the run manifest hash);
+                falls back to hashing the document texts when not given
 
         Returns a results dict with layer0/layer1/codebook_signoff/layer3.
         """
@@ -132,9 +182,7 @@ class EQDPipeline:
         its_history = self.layer1.its_tracker.history
         quality_results = self.metrics_engine.compute_all(
             its_history=its_history,
-            triage_stats=layer1_summary.get("triage_stats", {}),
             batch_merge_rates=layer1_summary.get("batch_merge_rates", []),
-            grey_zone_decisions=layer1_summary.get("grey_zone_decisions", []),
             total_dropped=layer1_summary.get("total_dropped", 0),
             total_candidates=layer1_summary.get("total_candidates", 0),
             dropped_per_segment=layer1_summary.get("dropped_per_segment", {}),
@@ -153,5 +201,106 @@ class EQDPipeline:
         ]
 
         results["layer3"] = quality_results
+
+        # ── Run manifest + central registry ───────────────────────────────
+        try:
+            self._register_run(documents, dataset_path, quality_results)
+        except Exception as e:  # never let bookkeeping fail the pipeline
+            logger.warning(f"[REGISTRY] Failed to register run: {e}")
+
         logger.info("[PIPELINE] Complete")
         return results
+
+    # ── Run registry helpers ──────────────────────────────────────────────
+
+    def _register_run(
+        self,
+        documents: List[Document],
+        dataset_path: Optional[str],
+        quality_results: Dict[str, Any],
+    ) -> None:
+        """Build the run manifest, register it, and record final metrics."""
+        if not self.leaderboard_db_path:
+            return
+
+        manifest = self._build_manifest(documents, dataset_path)
+        metrics, directions = self._flatten_metrics(quality_results)
+
+        registry = RunRegistry(self.leaderboard_db_path)
+        registry.register_run(manifest)
+        registry.record_metrics(self.run_id, metrics, directions)
+        logger.info(
+            f"[REGISTRY] Registered run '{self.run_id}' "
+            f"({len(metrics)} metrics) → {self.leaderboard_db_path}"
+        )
+
+    def _build_manifest(
+        self, documents: List[Document], dataset_path: Optional[str]
+    ) -> RunManifest:
+        cfg = self.config
+        coder_agent = cfg.agents["coder_agent"]
+        gen_model_id = cfg.models[coder_agent.model].model_id
+        embed_model_id = cfg.models[cfg.agents["embedding"].model].model_id
+
+        # Prompt fingerprints (template-level, with empty codebook context)
+        coder_prompt_hash = _sha256(build_coder_system_prompt(""))
+        judge_prompt_hash = _sha256(build_comparator_system_prompt())
+
+        if dataset_path and Path(dataset_path).exists():
+            dataset_hash = _sha256(Path(dataset_path).read_text(encoding="utf-8", errors="ignore"))
+        else:
+            dataset_hash = _sha256("\n".join(d.raw_text for d in documents))
+
+        proc = cfg.processing
+        config_snapshot = {
+            "batch_size": proc.batch_size,
+            "segments_per_coder_call": proc.segments_per_coder_call,
+            "similarity_prefilter_k": proc.similarity_prefilter_k,
+            "its_saturation_threshold": proc.its_saturation_threshold,
+            "its_consecutive_batches": proc.its_consecutive_batches,
+            "reasoning_log_mode": proc.reasoning_log_mode,
+        }
+
+        return RunManifest(
+            run_id=self.run_id,
+            generation_model_id=gen_model_id,
+            embedding_model_id=embed_model_id,
+            coder_prompt_hash=coder_prompt_hash,
+            judge_prompt_hash=judge_prompt_hash,
+            dataset_path=dataset_path,
+            dataset_hash=dataset_hash,
+            dataset_size=len(documents),
+            temperature=coder_agent.temperature,
+            seed=self.seed,
+            k_repeat_index=self.k_repeat_index,
+            config_snapshot=config_snapshot,
+            run_db_path=self.db_path,
+            git_sha=_git_sha(),
+        )
+
+    @staticmethod
+    def _flatten_metrics(
+        quality_results: Dict[str, Any],
+    ) -> tuple[Dict[str, float], Dict[str, str]]:
+        """Extract scalar leaderboard metrics from the nested metric results."""
+        def _get(path: List[str]) -> Optional[float]:
+            node: Any = quality_results
+            for key in path:
+                if not isinstance(node, dict):
+                    return None
+                node = node.get(key)
+            return node if isinstance(node, (int, float)) else None
+
+        metrics: Dict[str, float] = {
+            "grounding_rate": _get(["grounding", "grounding_rate"]),
+            "extraction_density_mean": _get(["extraction_density", "distribution", "mean"]),
+            "candidate_drop_rate": _get(["extraction_density", "drop_rate", "overall_rate"]),
+            "quote_hallucination_rate": _get(["quote_hallucination_rate", "quote_hallucination_rate"]),
+            "singleton_ratio": _get(["ic_concentration", "singleton_ratio"]),
+            "merge_rate": _get(["merge_rate", "overall_rate"]),
+            "mean_coder_confidence": _get(["coder_confidence", "mean_confidence"]),
+            "cross_review_convergence": _get(["cross_review_convergence", "confirmed_ratio"]),
+        }
+        metrics = {k: v for k, v in metrics.items() if v is not None}
+        directions = {k: _METRIC_DIRECTIONS.get(k, "") for k in metrics}
+        return metrics, directions

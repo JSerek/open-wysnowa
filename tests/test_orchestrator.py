@@ -135,12 +135,13 @@ class TestLayer1Orchestrator:
         assert result["total_segments"] == 0
         assert result["batches_processed"] == 0
 
-    def test_all_existing_matches_skip_comparator(self, mock_orchestrator, test_segment):
+    def test_existing_match_still_goes_through_judge(self, mock_orchestrator, test_segment):
+        """v2: existing_code_match is a logged signal only — candidate still hits the judge."""
         canonical = test_segment.canonical_text
         quote_text = "dostawa trwała zbyt długo"
         start = canonical.index(quote_text)
 
-        # Coder Agent returns candidate with existing match
+        # Coder Agent returns candidate with existing match flagged
         mock_orchestrator.coder_agent.process_batch.return_value = {
             test_segment.id: [
                 ICCandidate(
@@ -154,13 +155,24 @@ class TestLayer1Orchestrator:
                 ),
             ]
         }
+        # Judge is consulted for every candidate now
+        mock_orchestrator.comparator.evaluate.return_value = (
+            ComparatorOutput(
+                recommendation=ComparatorRecommendation.MERGE,
+                merge_target_name="delivery_speed_complaint",
+                reasoning="Same phenomenon as existing code.",
+            ),
+            [],  # no top_k needed for the assertion
+            {"decision_path": "llm", "max_sim": 0.7, "llm_recommendation": "MERGE"},
+        )
 
         result = mock_orchestrator.run([test_segment], enable_hil=False)
 
-        assert result["existing_matches"] == 1
         assert result["total_candidates"] == 1
-        # Comparator should NOT be called for existing matches
-        mock_orchestrator.comparator.evaluate.assert_not_called()
+        # existing_code_match recorded as a signal
+        assert result["coder_flagged_match"] == 1
+        # Comparator IS called — no shortcut path anymore
+        mock_orchestrator.comparator.evaluate.assert_called_once()
 
     def test_new_candidate_auto_accept(self, mock_orchestrator, test_segment):
         canonical = test_segment.canonical_text
@@ -188,7 +200,7 @@ class TestLayer1Orchestrator:
                 reasoning="No similar codes in codebook.",
             ),
             [],  # empty top-K
-            {"triage_path": "empty_codebook", "max_sim": None, "llm_recommendation": None},
+            {"decision_path": "empty_codebook", "max_sim": None, "llm_recommendation": None},
         )
 
         # Mock embedding: embed_ic/embed_quote must return real objects (not MagicMock)
@@ -234,7 +246,7 @@ class TestLayer1Orchestrator:
                 reasoning="Too vague, not analytically useful.",
             ),
             [],
-            {"triage_path": "grey_zone", "max_sim": 0.6, "llm_recommendation": "REJECT"},
+            {"decision_path": "llm", "max_sim": 0.6, "llm_recommendation": "REJECT"},
         )
 
         result = mock_orchestrator.run([test_segment], enable_hil=False)

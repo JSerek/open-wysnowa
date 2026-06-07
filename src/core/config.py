@@ -48,12 +48,6 @@ class StudyConfig(BaseModel):
     embedding_model_locked: bool = False
 
 
-class MetaICFilterConfig(BaseModel):
-    enabled: bool = True
-    name_patterns: List[str] = Field(default_factory=list)
-    definition_signals: List[str] = Field(default_factory=list)
-
-
 class ThemeRefinementConfig(BaseModel):
     """Config for post-synthesis theme refinement (distinctness + splitting)."""
     distinctness_threshold: float = 0.70       # pairs above this get revision
@@ -115,17 +109,17 @@ class AnalystGuidelinesConfig(BaseModel):
 
 class ProcessingConfig(BaseModel):
     batch_size: int = 15
-    segments_per_coder_call: int = 5  # micro-batch: segments per LLM call
+    segments_per_coder_call: int = 1  # v2: always 1 review = 1 LLM call (batch mode removed)
     its_saturation_threshold: float = 0.02
     its_consecutive_batches: int = 3
     similarity_prefilter_k: int = 5
-    merge_conflict_similarity_threshold: float = 0.75
-    auto_new_threshold: float = 0.5      # max_sim below this → auto-NEW (skip LLM)
-    auto_merge_threshold: float = 0.8    # max_sim above this → auto-MERGE (skip LLM)
+    # v2 (Phase 1): no operating thresholds. The embedding only supplies the
+    # top-k shortlist; the LLM judge decides every candidate. auto_new_threshold /
+    # auto_merge_threshold / merge_conflict_similarity_threshold and the meta-IC
+    # filter were removed in the raw-measurement pivot.
     category_merge_threshold: float = 0.85  # centroid sim above this → merge categories
     coherence_threshold: float = 1.0     # normalized coherence below this → flag/dissolve
     coherence_threshold_small: float = 0.90  # threshold for themes with <5 ICs
-    meta_ic_filter: MetaICFilterConfig = Field(default_factory=MetaICFilterConfig)
     reasoning_log_mode: str = "full"  # "full" | "failures_only"
 
 
