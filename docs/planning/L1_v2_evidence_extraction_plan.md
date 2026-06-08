@@ -12,7 +12,11 @@
 > - ✅ **FAZA 2 — UKOŃCZONA** (2026-06-08): drugie przejście (omitted-text audit),
 >   dwupunktowa density + metryki diagnostyczne pass2. 205 testów green; smoke
 >   `canonical_top10` zweryfikowany (komplet metryk pass2 w rejestrze).
-> - ⏳ **FAZA 3 — DO ZROBIENIA:** leaderboard (macierz modeli) + bezprogowe AUC.
+> - ✅ **FAZA 3 — UKOŃCZONA** (2026-06-08): leaderboard (macierz gen × embed × k),
+>   sędzia sim-blind + bezprogowe `embedding_separation_auc`, harness +
+>   `report.py` (macierz Markdown/CSV z kierunkami i wariancją k>1). 221 testów
+>   green. Live smoke `canonical_top10` do odpalenia przez użytkownika
+>   (płatne wywołania API).
 
 ## Context — po co to robimy
 
@@ -434,7 +438,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
 
 ---
 
-## FAZA 3 — leaderboard (macierz modeli)  ⏳ DO ZROBIENIA
+## FAZA 3 — leaderboard (macierz modeli)  ✅ UKOŃCZONA (2026-06-08)
 
 **Cel:** uruchamiać L1 dla wielu (model generacyjny × model embeddingowy),
 zbierać metryki do macierzy, oceniać embedding bezprogowym AUC. k=1 teraz,

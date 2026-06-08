@@ -26,7 +26,12 @@ from src.core.models import (
     ComparatorRecommendation,
     ICCandidate,
 )
-from src.extraction.prompts import build_comparator_system_prompt, build_comparator_user_prompt
+from src.extraction.prompts import (
+    build_comparator_system_prompt,
+    build_comparator_system_prompt_simblind,
+    build_comparator_user_prompt,
+    build_comparator_user_prompt_simblind,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,7 @@ class CodebookComparator:
         db: Database,
         config: EQDConfig,
         reasoning_logger: Optional["ReasoningLogger"] = None,
+        eval_mode: bool = False,
     ):
         self.model_client = model_client
         self.embedding_service = embedding_service
@@ -58,6 +64,13 @@ class CodebookComparator:
         self.config = config
         self.top_k = config.processing.similarity_prefilter_k
         self.reasoning_logger = reasoning_logger
+        # Eval (sim-blind) mode (Phase 3): the judge sees no cosine values, and we
+        # collect (top-1 cosine, verdict) pairs for the embedding_separation_auc
+        # metric. Only judged candidates (non-empty codebook) with a MERGE/NEW
+        # verdict are recorded — empty-codebook NEWs carry no cosine, and REJECT is
+        # a third class outside the merge-vs-new separation AUC measures.
+        self.eval_mode = eval_mode
+        self.eval_pairs: List[Tuple[float, str]] = []
 
     def evaluate(
         self,
@@ -132,6 +145,13 @@ class CodebookComparator:
                 reasoning=f"LLM comparison failed ({e}); defaulting to NEW for human review.",
             )
 
+        # Eval mode: record (top-1 cosine, verdict) for AUC — merge/new only.
+        if self.eval_mode and output.recommendation in (
+            ComparatorRecommendation.MERGE,
+            ComparatorRecommendation.NEW,
+        ):
+            self.eval_pairs.append((max_sim, output.recommendation.value))
+
         meta = {
             "decision_path": "llm",
             "max_sim": max_sim,
@@ -149,13 +169,22 @@ class CodebookComparator:
 
         Uses instructor for structured output → ComparatorOutput.
         """
-        system_prompt = build_comparator_system_prompt()
-        user_prompt = build_comparator_user_prompt(
-            candidate_name=candidate.ic_name,
-            candidate_definition=candidate.definition,
-            candidate_quote=candidate.quote_text,
-            top_k=top_k_with_defs,
-        )
+        if self.eval_mode:
+            system_prompt = build_comparator_system_prompt_simblind()
+            user_prompt = build_comparator_user_prompt_simblind(
+                candidate_name=candidate.ic_name,
+                candidate_definition=candidate.definition,
+                candidate_quote=candidate.quote_text,
+                top_k=top_k_with_defs,
+            )
+        else:
+            system_prompt = build_comparator_system_prompt()
+            user_prompt = build_comparator_user_prompt(
+                candidate_name=candidate.ic_name,
+                candidate_definition=candidate.definition,
+                candidate_quote=candidate.quote_text,
+                top_k=top_k_with_defs,
+            )
 
         client, model_id, params = self.model_client.get_client("codebook_comparator")
 

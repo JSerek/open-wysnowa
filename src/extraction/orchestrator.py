@@ -180,17 +180,20 @@ class Layer1Orchestrator:
         db: Database,
         config: EQDConfig,
         reasoning_logger: Optional["ReasoningLogger"] = None,
+        eval_mode: bool = False,
     ):
         self.model_client = model_client
         self.db = db
         self.config = config
         self.reasoning_logger = reasoning_logger
+        self.eval_mode = eval_mode
 
         # Sub-components
         self.coder_agent = CoderAgent(model_client, db, config, reasoning_logger)
         self.embedding_service = EmbeddingService(model_client, db)
         self.comparator = CodebookComparator(
             model_client, self.embedding_service, db, config, reasoning_logger,
+            eval_mode=eval_mode,
         )
         # Pass-2 (omitted-text audit) agent — same generative slot as the coder.
         self.second_pass_agent = SecondPassAgent(
@@ -391,6 +394,9 @@ class Layer1Orchestrator:
         # Expose decision-path + merge tracking for metrics
         summary["decision_paths"] = dict(self.decision_paths)
         summary["batch_merge_rates"] = list(self.batch_merge_rates)
+
+        # Eval mode: (top-1 cosine, sim-blind verdict) pairs for the AUC metric.
+        summary["auc_pairs"] = list(self.comparator.eval_pairs)
 
         # IC stability scores from refinement
         summary["ic_stability_scores"] = getattr(self, "_ic_stability_scores", [])

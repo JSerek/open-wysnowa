@@ -32,6 +32,7 @@ from src.extraction.codebook_signoff import CodebookSignoff
 from src.extraction.orchestrator import Layer1Orchestrator
 from src.extraction.prompts import (
     build_comparator_system_prompt,
+    build_comparator_system_prompt_simblind,
     build_coder_system_prompt,
 )
 from src.core.config import ModelClient
@@ -59,6 +60,8 @@ _METRIC_DIRECTIONS: Dict[str, str] = {
     "recovery_rate": "",
     "accidental_omission_ratio": "less",
     "deliberate_omission_ratio": "",
+    # Phase 3 — embedding evaluation
+    "embedding_separation_auc": "more",
 }
 
 
@@ -93,6 +96,7 @@ class EQDPipeline:
         seed: Optional[int] = None,
         k_repeat_index: int = 0,
         leaderboard_db_path: Optional[str] = "runs/leaderboard.db",
+        eval_mode: bool = False,
     ):
         # Accept a ready-made Config (leaderboard harness overrides model ids
         # programmatically) or load from disk. Explicit config wins over path.
@@ -101,6 +105,9 @@ class EQDPipeline:
         self.seed = seed
         self.k_repeat_index = k_repeat_index
         self.leaderboard_db_path = leaderboard_db_path
+        # Eval (sim-blind) mode: the judge sees no cosine values and (cosine,
+        # verdict) pairs are collected for embedding_separation_auc (Phase 3).
+        self.eval_mode = eval_mode
 
         self.db = Database(db_path)
         self.db.init_schema()
@@ -121,6 +128,7 @@ class EQDPipeline:
 
         self.layer1 = Layer1Orchestrator(
             self.model_client, self.db, self.config, self.reasoning_logger,
+            eval_mode=eval_mode,
         )
         self.signoff = CodebookSignoff(self.db, self.embedding_service)
         self.metrics_engine = L1MetricsEngine(self.db, self.embedding_service)
@@ -201,6 +209,8 @@ class EQDPipeline:
             # Pass-2 two-point density + omitted-text audit diagnostics
             density_snapshots=layer1_summary.get("density_snapshots", []),
             pass2_stats=layer1_summary.get("pass2_stats", {}),
+            # Phase 3 — (cosine, sim-blind verdict) pairs for the AUC metric
+            auc_pairs=layer1_summary.get("auc_pairs", []),
         )
 
         # Cumulative saturation curve from Layer 1
@@ -252,9 +262,14 @@ class EQDPipeline:
         gen_model_id = cfg.models[coder_agent.model].model_id
         embed_model_id = cfg.models[cfg.agents["embedding"].model].model_id
 
-        # Prompt fingerprints (template-level, with empty codebook context)
+        # Prompt fingerprints (template-level, with empty codebook context).
+        # In eval mode the judge runs the sim-blind prompt — fingerprint that one.
         coder_prompt_hash = _sha256(build_coder_system_prompt(""))
-        judge_prompt_hash = _sha256(build_comparator_system_prompt())
+        judge_prompt_hash = _sha256(
+            build_comparator_system_prompt_simblind()
+            if self.eval_mode
+            else build_comparator_system_prompt()
+        )
 
         if dataset_path and Path(dataset_path).exists():
             dataset_hash = _sha256(Path(dataset_path).read_text(encoding="utf-8", errors="ignore"))
@@ -317,6 +332,8 @@ class EQDPipeline:
             "recovery_rate": _get(["density_passes", "recovery_rate"]),
             "accidental_omission_ratio": _get(["omission_stats", "accidental_omission_ratio"]),
             "deliberate_omission_ratio": _get(["omission_stats", "deliberate_omission_ratio"]),
+            # Phase 3 — embedding evaluation (None outside eval mode / one-class)
+            "embedding_separation_auc": _get(["embedding_separation", "auc"]),
         }
         metrics = {k: v for k, v in metrics.items() if v is not None}
         directions = {k: _METRIC_DIRECTIONS.get(k, "") for k in metrics}

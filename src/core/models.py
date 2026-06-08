@@ -59,6 +59,8 @@ class MetricType(str, Enum):
     RECOVERY_RATE = "recovery_rate"
     ACCIDENTAL_OMISSION_RATIO = "accidental_omission_ratio"
     DELIBERATE_OMISSION_RATIO = "deliberate_omission_ratio"
+    # Phase 3 — threshold-free embedding evaluation
+    EMBEDDING_SEPARATION_AUC = "embedding_separation_auc"
     THEMATIC_COVERAGE = "thematic_coverage"
     CROSS_REVIEW_CONVERGENCE = "cross_review_convergence"
     IC_STABILITY = "ic_stability"

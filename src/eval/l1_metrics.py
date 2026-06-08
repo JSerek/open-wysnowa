@@ -131,6 +131,12 @@ class L1MetricsEngine:
             kwargs.get("pass2_stats", {})
         )
 
+        # ── EMBEDDING EVALUATION (Phase 3) ────────────────────────────────
+        # Threshold-free AUC over (top-1 cosine, sim-blind judge verdict) pairs.
+        results["embedding_separation"] = self.compute_embedding_separation_auc(
+            kwargs.get("auc_pairs", [])
+        )
+
         # ── SATURATION / EVIDENCE ─────────────────────────────────────────
         results["its_history"] = its_history or []
         results["cross_review_convergence"] = self.compute_cross_review_convergence()
@@ -640,6 +646,74 @@ class L1MetricsEngine:
             "recovered_accepted": int(pass2_stats.get("recovered_accepted", 0)),
             "recovered_hallucinated": int(pass2_stats.get("recovered_hallucinated", 0)),
             "overlap_drops": int(pass2_stats.get("overlap_drops", 0)),
+        }
+
+    def compute_embedding_separation_auc(
+        self, auc_pairs: List[Tuple[float, str]]
+    ) -> Dict[str, Any]:
+        """
+        Threshold-free embedding evaluation (Phase 3, contract #7).
+
+        Input: (top-1 cosine, sim-blind judge verdict) pairs, one per judged
+        candidate against a non-empty codebook. MERGE is the positive class (the
+        embedding should rank these HIGH); NEW is the negative class (LOW). REJECT
+        and empty-codebook NEWs are excluded upstream.
+
+        AUC = P(cosine of a MERGE pair > cosine of a NEW pair), i.e. the probability
+        that the embedding's similarity separates the two verdicts. Computed as the
+        Mann-Whitney U statistic normalised by n_merge·n_new, using average ranks
+        for ties (no external dependency):
+            AUC = (R_merge − n_merge·(n_merge+1)/2) / (n_merge · n_new)
+        where R_merge is the summed rank of the MERGE cosines in the pooled sample.
+
+        AUC ≈ 1.0 → embedding cleanly separates merges from new; ≈ 0.5 → no signal.
+        Direction: more = better. Returns auc=None when either class is empty
+        (separation is undefined with only one class present).
+        """
+        merges = [s for s, v in auc_pairs if v == "MERGE"]
+        news = [s for s, v in auc_pairs if v == "NEW"]
+        n_merge, n_new = len(merges), len(news)
+
+        if n_merge == 0 or n_new == 0:
+            return {
+                "auc": None, "n_merge": n_merge, "n_new": n_new,
+                "n_pairs": len(auc_pairs),
+            }
+
+        # Average-rank assignment over the pooled cosines (1-indexed).
+        pooled = sorted(
+            [(s, "m") for s in merges] + [(s, "n") for s in news],
+            key=lambda x: x[0],
+        )
+        ranks: List[float] = [0.0] * len(pooled)
+        i = 0
+        while i < len(pooled):
+            j = i
+            while j + 1 < len(pooled) and pooled[j + 1][0] == pooled[i][0]:
+                j += 1
+            avg_rank = (i + 1 + j + 1) / 2.0  # mean of tied 1-indexed positions
+            for k in range(i, j + 1):
+                ranks[k] = avg_rank
+            i = j + 1
+
+        r_merge = sum(r for r, (_, lbl) in zip(ranks, pooled) if lbl == "m")
+        u_merge = r_merge - n_merge * (n_merge + 1) / 2.0
+        auc = u_merge / (n_merge * n_new)
+
+        self.qm_repo.insert(QualityMetric(
+            metric_type=MetricType.EMBEDDING_SEPARATION_AUC,
+            value=auc,
+        ))
+
+        logger.info(
+            f"Embedding separation AUC: {auc:.3f} "
+            f"({n_merge} merge / {n_new} new pairs)"
+        )
+        return {
+            "auc": round(auc, 4),
+            "n_merge": n_merge,
+            "n_new": n_new,
+            "n_pairs": len(auc_pairs),
         }
 
     def compute_quote_hallucination_rate(

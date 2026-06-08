@@ -281,6 +281,59 @@ OUTPUT: Return a ComparatorOutput with your recommendation and brief reasoning."
 
 
 
+def build_comparator_system_prompt_simblind() -> str:
+    """
+    System prompt for the Codebook Comparator in EVAL (sim-blind) mode (Phase 3).
+
+    Identical methodology to `build_comparator_system_prompt`, but the negative
+    example carries NO similarity value. In eval mode the judge must decide
+    merge/new/reject purely from the texts (candidate vs neighbour definitions) so
+    that the pairing of (top-1 cosine, judge verdict) can score the embedding via
+    AUC without circularity (contract #7): if the judge saw the cosine, the AUC
+    would measure agreement with the embedding, not the embedding's own quality.
+    """
+    return """You are a qualitative coding expert reviewing a new Initial Code (IC) candidate for inclusion in an evolving codebook.
+
+YOUR TASK: Compare the new candidate against the most similar existing codes and recommend ONE action. Judge ONLY from the code names, definitions, and the example quote — you are deliberately given no numerical similarity scores.
+
+RECOMMENDATIONS:
+- NEW: The candidate captures a distinct meaning not covered by any existing code. Add it to the codebook.
+- MERGE: The candidate is semantically equivalent to an existing code — same meaning, just different wording, or a meaningful specialisation that doesn't warrant a separate code. Specify which code to merge into via merge_target_name.
+- REJECT: The candidate is too vague, not grounded in data, or genuinely redundant with no added value.
+
+DECISION CRITERIA:
+- Merge only when the codes describe the SAME experiential phenomenon — same meaning
+  in different wording, or a specialisation that doesn't warrant its own code.
+- Keep NEW when the candidate extends meaningfully beyond every neighbour, even if it
+  shares vocabulary or domain with them.
+- Consider: do the codes describe the SAME experience from DIFFERENT angles, or DIFFERENT
+  experiences that happen to share vocabulary?
+
+--- NEGATIVE EXAMPLE (over-merging) ---
+
+Existing IC: "combat_system_poor_quality"
+  Definition: "Player criticises core combat mechanics as sluggish, unresponsive, or broken"
+
+New candidate: "weapon_variety_lacking"
+  Definition: "Player feels the weapon selection is too limited, lacking interesting options"
+
+BAD:  recommendation: MERGE → "combat_system_poor_quality"
+WHY:  Both involve combat/weapons, but they describe DIFFERENT experiences:
+      one is about mechanical quality (responsiveness, hit detection),
+      the other is about content variety (number and diversity of weapons).
+      Merging them would conflate two analytically distinct phenomena.
+FIX:  recommendation: NEW
+      reasoning: "Despite domain overlap (combat), these codes describe distinct
+      experiential phenomena — mechanical quality vs. content variety."
+
+RULE: Similar words or shared domain ≠ same meaning. Only merge when the codes
+describe the SAME experiential phenomenon in different wording.
+
+--- END EXAMPLE ---
+
+OUTPUT: Return a ComparatorOutput with your recommendation and brief reasoning."""
+
+
 def build_comparator_user_prompt(
     candidate_name: str,
     candidate_definition: str,
@@ -319,6 +372,50 @@ def build_comparator_user_prompt(
         lines.append("codes above (→ MERGE), a DISTINCT phenomenon not captured above (→ NEW),")
         lines.append("or is it too vague / redundant to include (→ REJECT)?")
         lines.append("Use the similarity scores and definitions as your primary signal.")
+
+    lines.append("")
+    lines.append("Return a ComparatorOutput with your recommendation and brief reasoning.")
+    return "\n".join(lines)
+
+
+def build_comparator_user_prompt_simblind(
+    candidate_name: str,
+    candidate_definition: str,
+    candidate_quote: str,
+    top_k: List[Tuple[str, str, str, float]],  # [(ic_id, name, definition, similarity)]
+) -> str:
+    """
+    User prompt for the Codebook Comparator in EVAL (sim-blind) mode (Phase 3).
+
+    Same structure as `build_comparator_user_prompt`, but the neighbour list omits
+    every similarity value and any reference to embedding ranking. The similarity
+    tuple field is still accepted (so call sites are interchangeable) but ignored —
+    the judge decides from names and definitions alone, keeping the (cosine, verdict)
+    pairing valid for AUC (contract #7).
+    """
+    lines = [
+        "NEW IC CANDIDATE:",
+        f"  Name: {candidate_name}",
+        f"  Definition: {candidate_definition}",
+        f"  Example quote: \"{candidate_quote}\"",
+        "",
+    ]
+
+    if not top_k:
+        lines.append("MOST SIMILAR EXISTING CODES: (none — codebook is empty)")
+        lines.append("")
+        lines.append("Decision: this is a NEW code by default (no existing codes to compare against).")
+    else:
+        lines.append(f"{len(top_k)} CANDIDATE EXISTING CODES TO COMPARE AGAINST:")
+        for i, (ic_id, name, definition, _sim) in enumerate(top_k, 1):
+            lines.append(f"  [{i}] {name}")
+            lines.append(f"      Definition: {definition}")
+        lines.append("")
+        lines.append("---")
+        lines.append("Does the candidate describe the SAME experiential phenomenon as any of the")
+        lines.append("codes above (→ MERGE), a DISTINCT phenomenon not captured above (→ NEW),")
+        lines.append("or is it too vague / redundant to include (→ REJECT)?")
+        lines.append("Decide from the names and definitions alone.")
 
     lines.append("")
     lines.append("Return a ComparatorOutput with your recommendation and brief reasoning.")
