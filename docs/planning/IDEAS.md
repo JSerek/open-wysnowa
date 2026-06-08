@@ -9,10 +9,11 @@ status tag:
 - `[done]` — implemented; kept for reference
 
 > **v2 note (2026-06-06):** project pivoted to an L0–L1 evidence-extraction focus.
-> Active v2 backlog lives in `docs/v2/V2_ROADMAP.md`; harvested L1 baseline in
-> `docs/v2/V2_FOUNDATION.md`. The **v2 Phase-3 follow-ups** section directly below
-> is current; the older entries further down (Singleton Ratio, Comparator Prompt,
-> Token Usage) are v1 test-run ideas, kept for reference.
+> This file is the active v2 backlog; the authoritative implementation plan is
+> `L1_v2_evidence_extraction_plan.md` (all 3 phases done), and the harvested v1
+> baseline is `L1_v2_foundation.md`. The **v2 Phase-3 follow-ups** section directly
+> below is current; the older entries further down (Singleton Ratio, Comparator
+> Prompt, Token Usage) are v1 test-run ideas, kept for reference.
 
 ---
 
@@ -59,8 +60,7 @@ omitted fragments) or a calibration check; meanwhile label the metric
 ### T2 — second embedding axis + IC-naming-consistency metric `[explore]`
 
 **Problem:** The embedding axis has only `embed_openai`, so the leaderboard can't
-actually compare embeddings — the headline reason AUC exists. (Also recorded in
-`docs/v2/V2_ROADMAP.md`.)
+actually compare embeddings — the headline reason AUC exists.
 
 **Fix:** add a second named embedding (e.g. `text-embedding-3-large` or an OSS
 model) to `eqd_config.yaml` `models:`; the harness already varies

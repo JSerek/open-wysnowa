@@ -22,9 +22,11 @@ Active layers on `main`:
 > `v1-full-pipeline` git tag and the `archive/full-pipeline` branch. Recover any
 > shelved file with `git show v1-full-pipeline:src/<file>`.
 
-For the harvested L1 knowledge and the deferred v2 plan, read **`docs/v2/`**:
-`V2_FOUNDATION.md` (data model, extraction flow, metrics, empirical learnings) and
-`V2_ROADMAP.md` (deferred workstreams + eval decision).
+For the L1 v2 work, read **`docs/planning/`**:
+`L1_v2_evidence_extraction_plan.md` (authoritative 3-phase implementation plan, all
+phases done — current state + design contract), `L1_v2_foundation.md` (harvested v1
+baseline: data-model contract + empirical learnings), and `IDEAS.md` (active
+backlog + Phase-3 follow-ups).
 
 ---
 
@@ -37,13 +39,13 @@ src/
   extraction/      # coder_agent, codebook_comparator, orchestrator,
                    #   codebook_signoff, hil, prompts (L1), pipeline (L0+L1)
   eval/            # l1_metrics.py — L1MetricsEngine
-  leaderboard/     # placeholder — deferred v2 leaderboard harness
+  leaderboard/     # registry, harness, report (Phase 3 model leaderboard)
 scripts/
   run_pipeline.py        # CLI: L0 + L1 + L1 metrics
   load_steam_reviews.py  # CSV → Document
   init_db.py
 tests/                   # L0–L1 + infra + test_l1_metrics.py
-docs/v2/                 # V2_FOUNDATION.md, V2_ROADMAP.md
+docs/planning/           # L1_v2_evidence_extraction_plan.md, L1_v2_foundation.md, IDEAS.md
 archived/v1/             # all v1 full-pipeline artifacts (docs, skills, scripts)
 ```
 
@@ -73,14 +75,14 @@ YAML but are unused in v2.)
 
 ---
 
-## L1 thresholds (still in force)
+## L1 triage — single decision track (no thresholds)
 
-```yaml
-processing:
-  auto_new_threshold: 0.55     # sim < 0.55 → auto-NEW
-  auto_merge_threshold: 0.65   # sim > 0.65 → auto-MERGE
-                               # 0.55–0.65 → grey zone → LLM comparator call
-```
+Phase 1 removed the threshold-based triage. Every candidate now goes through one
+track: embedding `find_similar_ics(top_k)` (ranking only, no cutoff) → LLM judge
+returns NEW / MERGE / REJECT. The only shortcut is an empty codebook → NEW without
+an LLM call. `auto_new_threshold` / `auto_merge_threshold` /
+`merge_conflict_similarity_threshold` and the meta-IC filter are gone (see
+`docs/planning/L1_v2_evidence_extraction_plan.md` Phase 1.4 + Appendix C).
 
 (`distinctness_threshold`, `coherence_threshold`, `cat_merge_sim_threshold` were
 L2+ concerns and no longer apply on `main`.)
@@ -123,11 +125,14 @@ and `linkedin/` are gitignored.
 
 ---
 
-## Deferred (recorded in docs/v2/V2_ROADMAP.md, not yet built)
+## Deferred (live backlog in docs/planning/IDEAS.md)
 
-- **Omitted-text second pass** — explicit keep/skip + reasoning over the
-  un-extracted portion of each review (the headline v2 idea).
-- **Multi-model / multi-prompt leaderboard** — rank models/prompts on L1 metrics.
-- **Embedding-model comparison + IC-naming-consistency metrics.**
+The headline v2 ideas are now **built**: omitted-text second pass (Phase 2) and the
+multi-model leaderboard with threshold-free embedding AUC (Phase 3). What remains
+deferred (see `IDEAS.md` Phase-3 follow-ups for detail):
+
+- **Second embedding axis + IC-naming-consistency metric** — only one embedding
+  model so far, so the leaderboard can't yet compare embeddings head-to-head.
+- **Multi-prompt axis** — vary coder/judge prompts alongside model in the harness.
 - **Eval methodology** — exploratory → reference-free for now; no golden dataset
   unless a confirmatory need arises.

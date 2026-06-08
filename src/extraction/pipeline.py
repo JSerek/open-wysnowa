@@ -10,7 +10,7 @@ Slim orchestrator for the v2 evidence-extraction focus:
 
 Theme synthesis (L2), category synthesis, the full L3 metric suite, and the
 analyst brief (L4) were shelved in the v2 pivot — recover them from the
-`v1-full-pipeline` git tag / `archive/full-pipeline` branch. See docs/v2/.
+`v1-full-pipeline` git tag / `archive/full-pipeline` branch. See docs/planning/.
 """
 
 from __future__ import annotations

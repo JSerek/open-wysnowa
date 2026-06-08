@@ -765,7 +765,7 @@ class L1MetricsEngine:
         Requires joining: quotes → segments → documents to trace provenance.
 
         NOTE: judgment-call L1/L2 metric — kept in the v2 L1 set for now; revisit
-        whether it belongs here (see docs/v2/V2_FOUNDATION.md).
+        whether it belongs here (see docs/planning/L1_v2_evidence_extraction_plan.md).
         """
         codebook = self.ic_repo.get_all_active()
         if not codebook:

@@ -3,7 +3,7 @@
 EQD-AI v2 Evidence-Extraction Runner — CLI entry point.
 
 Runs L0 (preprocessing) + L1 (IC extraction + codebook building) + L1 metrics.
-Theme synthesis and above were shelved in the v2 pivot (see docs/v2/).
+Theme synthesis and above were shelved in the v2 pivot (see docs/planning/).
 
 Usage:
     # Smoke test (10 reviews, automated)
