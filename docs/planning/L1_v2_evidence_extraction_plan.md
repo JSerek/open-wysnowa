@@ -5,6 +5,14 @@
 > **Każda faza musi zaczynać się od wczytania:** tej sekcji Context +
 > „DECYZJE PROJEKTOWE (kontrakt)" + „Handoff: środowisko i założenia
 > implementacyjne". Reszta jest specyficzna dla danej fazy.
+>
+> **Postęp realizacji:**
+> - ✅ **FAZA 1 — UKOŃCZONA** (commit `c65b9c4`, 2026-06-07): surowy jednoprzejściowy
+>   fundament, jeden tor decyzyjny, manifest runu + rejestr.
+> - ✅ **FAZA 2 — UKOŃCZONA** (2026-06-08): drugie przejście (omitted-text audit),
+>   dwupunktowa density + metryki diagnostyczne pass2. 205 testów green; smoke
+>   `canonical_top10` zweryfikowany (komplet metryk pass2 w rejestrze).
+> - ⏳ **FAZA 3 — DO ZROBIENIA:** leaderboard (macierz modeli) + bezprogowe AUC.
 
 ## Context — po co to robimy
 
@@ -193,7 +201,7 @@ Informacje wspólne, potrzebne do wdrożenia każdej fazy w czystym oknie:
 
 ---
 
-## FAZA 1 — surowy, jednoprzejściowy fundament
+## FAZA 1 — surowy, jednoprzejściowy fundament  ✅ UKOŃCZONA (commit `c65b9c4`)
 
 **Cel:** oczyścić L1 z protez i skrótów; jeden tor decyzyjny; pełna śledzalność.
 Po tej fazie pipeline robi jednoprzejściową ekstrakcję z surowym pomiarem i pełnym
@@ -298,7 +306,7 @@ manifestem runu. (Drugie przejście dochodzi w Fazie 2.)
 
 ---
 
-## FAZA 2 — drugie przejście (omitted-text audit)
+## FAZA 2 — drugie przejście (omitted-text audit)  ✅ UKOŃCZONA (2026-06-08)
 
 **Cel:** po pass1 każdej recenzji uruchom pass2 — model dostaje pełną recenzję z
 oznaczonymi fragmentami nie-wyciągniętymi, klasyfikuje je (deliberate/accidental) i
@@ -307,7 +315,18 @@ może odzyskać dowody. Mierzymy density w dwóch punktach + nowe metryki diagno
 **Wymaga wczytania:** Context + „DECYZJE PROJEKTOWE (kontrakt)" + „Handoff" +
 wynik Fazy 1.
 
-### 2.1 Nowe modele Pydantic (pass2)
+> **Notatka realizacyjna (2026-06-08):** jednostka two-pass = recenzja; pass1
+> codera wołany per-recenzję (`coder.process_batch([segment])`), więc recenzja N+1
+> widzi ICs z recenzji N (świeży codebook — wierne kontraktowi #2). Tor decyzyjny
+> wydzielony do `Layer1Orchestrator._decide_and_apply` (DRY pass1/pass2). Bramki
+> pass2: grounding gate (`recovered_hallucinated`) → DEDUP overlap
+> (`overlap_drops`, log `overlap_drop`). `recovery_rate` = udział recenzji z ≥1
+> zaakceptowanym odzyskiem (komplementarny do `density_delta`, który łapie
+> magnitudę znakową). Nagłówek HIL: „Candidates" → „Reviews" (jednostka per-recenzja).
+> Nowe pliki: `src/extraction/omitted.py`, `src/extraction/second_pass_agent.py`,
+> `tests/test_second_pass.py` (14 testów, fixture'y syntetyczne).
+
+### 2.1 ✅ Nowe modele Pydantic (pass2)
 W `src/core/models.py`:
 ```python
 class OmissionType(str, Enum):
@@ -331,7 +350,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
 - **Kolejność pól w `OmittedFragmentAssessment` jest istotna**: `reasoning` przed
   polami decyzyjnymi (poprawny CoT).
 
-### 2.2 Programistyczne oznaczanie fragmentów omitted
+### ✅ 2.2 Programistyczne oznaczanie fragmentów omitted
 - **Nowy moduł** `src/extraction/omitted.py`:
   `build_omitted_view(canonical_text, pass1_spans) -> str`.
   - Z `pass1_spans` (lista `(start,end)` zaakceptowanych quotes pass1 dla tej
@@ -342,7 +361,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
     decyzja użytkownika; deterministyczne i wierne).
   - Zwróć string-widok recenzji do promptu pass2.
 
-### 2.3 Agent pass2 (ten sam model)
+### ✅ 2.3 Agent pass2 (ten sam model)
 - **Nowy moduł** `src/extraction/second_pass_agent.py` (wzór: `coder_agent.py`):
   - `assess_omitted(segment, pass1_spans, codebook_context) -> SecondPassResult`.
   - Buduje prompt z `build_omitted_view`; jeden API call per recenzja; instructor
@@ -355,7 +374,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
   `contains_evidence`, i jeśli tak — `recovered_evidence` jako pełne ICCandidate
   (quote = dokładny podciąg, span względem całej recenzji)".
 
-### 2.4 Integracja w orchestratorze — per recenzja two-pass
+### ✅ 2.4 Integracja w orchestratorze — per recenzja two-pass
 - `orchestrator.py`: zrestrukturyzuj tak, by jednostką two-pass była **recenzja**:
   ```
   dla każdej recenzji (segmentu):
@@ -377,7 +396,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
 - reasoning_log: rekordy pass2 z `pass: 2`, `omission_type`, `contains_evidence`,
   `reasoning`, oraz dla recovered — pełny ślad jak w pass1.
 
-### 2.5 Nowe metryki (dwupunktowa density + diagnostyka pass2)
+### ✅ 2.5 Nowe metryki (dwupunktowa density + diagnostyka pass2)
 - `MetricType` (dodaj): `DENSITY_PASS1`, `DENSITY_PASS2`, `DENSITY_DELTA`,
   `RECOVERY_RATE`, `ACCIDENTAL_OMISSION_RATIO`, `DELIBERATE_OMISSION_RATIO`.
 - `l1_metrics.py` — przebuduj pomiar density na **dwupunktowy per recenzja**
@@ -394,7 +413,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
 - `pipeline.py`: przekaż snapshoty density + statystyki pass2 z `layer1_summary`
   do `metrics_engine.compute_all`.
 
-### 2.6 Testy Fazy 2
+### ✅ 2.6 Testy Fazy 2
 - `build_omitted_view`: poprawne dopełnienie spanów (przed/między/po), surowe
   granice, brak nakładania tagów.
 - DEDUP: recovered quote nakładający się na pass1 → odrzucony.
@@ -415,7 +434,7 @@ class SecondPassResult(BaseModel):       # agregat — łapie wszystkie fragment
 
 ---
 
-## FAZA 3 — leaderboard (macierz modeli)
+## FAZA 3 — leaderboard (macierz modeli)  ⏳ DO ZROBIENIA
 
 **Cel:** uruchamiać L1 dla wielu (model generacyjny × model embeddingowy),
 zbierać metryki do macierzy, oceniać embedding bezprogowym AUC. k=1 teraz,

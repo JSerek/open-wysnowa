@@ -9,6 +9,7 @@ from src.core.models import (
     ComparatorRecommendation,
     ICCandidate,
     Segment,
+    SecondPassResult,
     SegmentCodingResult,
 )
 from src.extraction.orchestrator import ITSTracker, Layer1Orchestrator
@@ -127,6 +128,15 @@ class TestLayer1Orchestrator:
         orch.coder_agent = MagicMock()
         orch.comparator = MagicMock()
         orch.embedding_service = MagicMock()
+        # Pass-2 audit mocked to a no-op (these tests exercise the pass-1 track).
+        orch.second_pass_agent = MagicMock()
+        orch.second_pass_agent.assess_omitted.return_value = SecondPassResult(
+            segment_id="seg_test", fragments=[],
+        )
+        # Candidate texts are batch-embedded per pass; return one vector per text.
+        orch.embedding_service.embed_texts_batch.side_effect = (
+            lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+        )
 
         return orch
 

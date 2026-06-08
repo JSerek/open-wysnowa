@@ -121,6 +121,16 @@ class L1MetricsEngine:
             kwargs.get("batch_merge_rates", [])
         )
 
+        # ── PASS-2 (OMITTED-TEXT AUDIT) ───────────────────────────────────
+        # Two-point density measured per review from in-memory snapshots
+        # (contract #13), not a DB end-of-run aggregate.
+        results["density_passes"] = self.compute_density_passes(
+            kwargs.get("density_snapshots", [])
+        )
+        results["omission_stats"] = self.compute_omission_stats(
+            kwargs.get("pass2_stats", {})
+        )
+
         # ── SATURATION / EVIDENCE ─────────────────────────────────────────
         results["its_history"] = its_history or []
         results["cross_review_convergence"] = self.compute_cross_review_convergence()
@@ -518,6 +528,119 @@ class L1MetricsEngine:
             f"({overall_rate:.1%} overall)"
         )
         return result
+
+    def compute_density_passes(
+        self, density_snapshots: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Two-point extraction density from per-review in-memory snapshots (contract #13).
+
+        Each snapshot carries {segment_id, char_count, density_pass1,
+        density_pass2, recovered}. density_passN = union(span) / char_count for
+        that review's accepted quotes after pass N (pass2 ⊇ pass1 by construction,
+        so density_pass2 ≥ density_pass1 per review).
+
+        Metrics:
+          - density_pass1 / density_pass2 — mean over reviews (descriptive).
+          - density_delta = density_pass2 − density_pass1 (mean of per-review
+            deltas) — internally-referenced, LESS is better: a large delta means
+            pass 1 missed a lot (poorly calibrated attention).
+          - recovery_rate = reviews where pass 2 recovered ≥1 accepted evidence /
+            total reviews — internally-referenced (reads with density_delta).
+        """
+        if not density_snapshots:
+            return {
+                "density_pass1": None, "density_pass2": None,
+                "density_delta": None, "recovery_rate": None,
+                "total_reviews": 0, "reviews_with_recovery": 0,
+            }
+
+        n = len(density_snapshots)
+        d1 = [s.get("density_pass1", 0.0) or 0.0 for s in density_snapshots]
+        d2 = [s.get("density_pass2", 0.0) or 0.0 for s in density_snapshots]
+        deltas = [b - a for a, b in zip(d1, d2)]
+        reviews_with_recovery = sum(1 for s in density_snapshots if s.get("recovered"))
+
+        density_pass1 = sum(d1) / n
+        density_pass2 = sum(d2) / n
+        density_delta = sum(deltas) / n
+        recovery_rate = reviews_with_recovery / n
+
+        for mtype, value in (
+            (MetricType.DENSITY_PASS1, density_pass1),
+            (MetricType.DENSITY_PASS2, density_pass2),
+            (MetricType.DENSITY_DELTA, density_delta),
+            (MetricType.RECOVERY_RATE, recovery_rate),
+        ):
+            self.qm_repo.insert(QualityMetric(metric_type=mtype, value=value))
+
+        logger.info(
+            f"Density two-point: pass1={density_pass1:.1%}, pass2={density_pass2:.1%}, "
+            f"delta={density_delta:.1%} | recovery_rate={recovery_rate:.1%} "
+            f"({reviews_with_recovery}/{n} reviews)"
+        )
+        return {
+            "density_pass1": round(density_pass1, 4),
+            "density_pass2": round(density_pass2, 4),
+            "density_delta": round(density_delta, 4),
+            "recovery_rate": round(recovery_rate, 4),
+            "total_reviews": n,
+            "reviews_with_recovery": reviews_with_recovery,
+        }
+
+    def compute_omission_stats(
+        self, pass2_stats: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Diagnostics over the pass-2 omitted-fragment assessments.
+
+        accidental_omission_ratio = accidental / (accidental + deliberate) — the
+        key discriminator of model attention; LESS is better (fewer genuine
+        misses). deliberate_omission_ratio is its complement (descriptive).
+
+        Also surfaces the 2×2 omission_type × contains_evidence signal and the
+        pass-2 gate drops (grounding / overlap) for transparency (DESIGN #7).
+        """
+        deliberate = int(pass2_stats.get("deliberate", 0))
+        accidental = int(pass2_stats.get("accidental", 0))
+        total = deliberate + accidental
+
+        if total == 0:
+            accidental_ratio = None
+            deliberate_ratio = None
+        else:
+            accidental_ratio = accidental / total
+            deliberate_ratio = deliberate / total
+            self.qm_repo.insert(QualityMetric(
+                metric_type=MetricType.ACCIDENTAL_OMISSION_RATIO,
+                value=accidental_ratio,
+            ))
+            self.qm_repo.insert(QualityMetric(
+                metric_type=MetricType.DELIBERATE_OMISSION_RATIO,
+                value=deliberate_ratio,
+            ))
+
+        logger.info(
+            f"Omission stats: {accidental} accidental / {deliberate} deliberate "
+            f"(accidental_ratio="
+            f"{accidental_ratio if accidental_ratio is None else round(accidental_ratio, 3)})"
+        )
+        return {
+            "fragments_total": int(pass2_stats.get("fragments_total", 0)),
+            "deliberate": deliberate,
+            "accidental": accidental,
+            "accidental_omission_ratio": (
+                None if accidental_ratio is None else round(accidental_ratio, 4)
+            ),
+            "deliberate_omission_ratio": (
+                None if deliberate_ratio is None else round(deliberate_ratio, 4)
+            ),
+            "contains_evidence_true": int(pass2_stats.get("contains_evidence_true", 0)),
+            "recovered_candidates": int(pass2_stats.get("recovered_candidates", 0)),
+            "recovered_accepted": int(pass2_stats.get("recovered_accepted", 0)),
+            "recovered_hallucinated": int(pass2_stats.get("recovered_hallucinated", 0)),
+            "overlap_drops": int(pass2_stats.get("overlap_drops", 0)),
+        }
 
     def compute_quote_hallucination_rate(
         self,

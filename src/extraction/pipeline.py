@@ -52,6 +52,13 @@ _METRIC_DIRECTIONS: Dict[str, str] = {
     "merge_rate": "",
     "mean_coder_confidence": "",
     "cross_review_convergence": "more",
+    # Pass-2 (omitted-text audit) — Appendix A
+    "density_pass1": "",
+    "density_pass2": "",
+    "density_delta": "less",
+    "recovery_rate": "",
+    "accidental_omission_ratio": "less",
+    "deliberate_omission_ratio": "",
 }
 
 
@@ -191,6 +198,9 @@ class EQDPipeline:
             coder_new_comp_new=layer1_summary.get("coder_new_comp_new", 0),
             coder_new_comp_merge=layer1_summary.get("coder_new_comp_merge", 0),
             coder_new_comp_reject=layer1_summary.get("coder_new_comp_reject", 0),
+            # Pass-2 two-point density + omitted-text audit diagnostics
+            density_snapshots=layer1_summary.get("density_snapshots", []),
+            pass2_stats=layer1_summary.get("pass2_stats", {}),
         )
 
         # Cumulative saturation curve from Layer 1
@@ -300,6 +310,13 @@ class EQDPipeline:
             "merge_rate": _get(["merge_rate", "overall_rate"]),
             "mean_coder_confidence": _get(["coder_confidence", "mean_confidence"]),
             "cross_review_convergence": _get(["cross_review_convergence", "confirmed_ratio"]),
+            # Pass-2 two-point density + omitted-text audit (Phase 2)
+            "density_pass1": _get(["density_passes", "density_pass1"]),
+            "density_pass2": _get(["density_passes", "density_pass2"]),
+            "density_delta": _get(["density_passes", "density_delta"]),
+            "recovery_rate": _get(["density_passes", "recovery_rate"]),
+            "accidental_omission_ratio": _get(["omission_stats", "accidental_omission_ratio"]),
+            "deliberate_omission_ratio": _get(["omission_stats", "deliberate_omission_ratio"]),
         }
         metrics = {k: v for k, v in metrics.items() if v is not None}
         directions = {k: _METRIC_DIRECTIONS.get(k, "") for k in metrics}

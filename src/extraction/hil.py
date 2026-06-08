@@ -77,16 +77,20 @@ def display_batch_header(
     batch_num: int,
     total_batches: int,
     codebook_size: int,
-    new_candidates: int,
+    review_count: int,
     its_value: Optional[float] = None,
     session_new: int = 0,
     session_merged: int = 0,
     session_rejected: int = 0,
 ) -> None:
-    """Print batch header with progress, codebook size, ITS, and session totals."""
+    """Print batch header with progress, codebook size, ITS, and session totals.
+
+    v2 processes one review at a time (two-pass), so the batch is sized in
+    reviews; the per-candidate count is not known until each review is coded.
+    """
     print(f"\n{SEPARATOR}")
     its_str = f"  |  ITS: {its_value:.3f}" if its_value is not None else ""
-    print(f"  BATCH {batch_num}/{total_batches}  |  Codebook: {codebook_size} ICs{its_str}  |  Candidates: {new_candidates}")
+    print(f"  BATCH {batch_num}/{total_batches}  |  Codebook: {codebook_size} ICs{its_str}  |  Reviews: {review_count}")
     if batch_num > 1:
         print(f"  Session so far:  +{session_new} new  ↔ {session_merged} merged  ✗ {session_rejected} rejected")
     print(SEPARATOR)

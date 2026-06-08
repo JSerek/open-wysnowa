@@ -52,6 +52,13 @@ class MetricType(str, Enum):
     COHERENCE_NORMALIZED = "coherence_normalized"
     CANDIDATE_DROP_RATE = "candidate_drop_rate"
     QUOTE_HALLUCINATION_RATE = "quote_hallucination_rate"
+    # Pass-2 (omitted-text audit) — two-point density + diagnostics
+    DENSITY_PASS1 = "density_pass1"
+    DENSITY_PASS2 = "density_pass2"
+    DENSITY_DELTA = "density_delta"
+    RECOVERY_RATE = "recovery_rate"
+    ACCIDENTAL_OMISSION_RATIO = "accidental_omission_ratio"
+    DELIBERATE_OMISSION_RATIO = "deliberate_omission_ratio"
     THEMATIC_COVERAGE = "thematic_coverage"
     CROSS_REVIEW_CONVERGENCE = "cross_review_convergence"
     IC_STABILITY = "ic_stability"
@@ -375,6 +382,68 @@ class SegmentCodingResult(BaseModel):
     """
     segment_id: str
     candidates: List[RawICCandidate] = Field(default_factory=list)
+
+
+# ── Layer 1 Pass 2: Omitted-Text Audit Models ───────────────────────────────
+
+class OmissionType(str, Enum):
+    """Why a fragment was left un-extracted by pass 1."""
+    DELIBERATE = "deliberate"   # filler / meta / off-topic — rightly skipped
+    ACCIDENTAL = "accidental"   # overlooked (e.g. lost-in-the-middle) — a miss
+
+
+class OmittedFragmentAssessment(BaseModel):
+    """
+    Pass-2 judgment on one `<omitted>` fragment of a review.
+
+    Field order is deliberate: `reasoning` comes FIRST so the model performs its
+    chain-of-thought before committing to the decision fields (omission_type /
+    contains_evidence / recovered_evidence). Reordering these weakens the CoT.
+
+    `recovered_evidence` reuses RawICCandidate (no character offsets) — the system
+    grounds each recovered quote against the full review's canonical_text and
+    computes the span deterministically, exactly as in pass 1.
+    """
+    omitted_text: str = Field(
+        min_length=1,
+        description="The exact text of the omitted fragment being assessed (verbatim).",
+    )
+    reasoning: str = Field(
+        min_length=1,
+        description=(
+            "Chain-of-thought FIRST: think through whether this fragment carries "
+            "un-extracted analytical evidence or is just filler/meta/off-topic, "
+            "BEFORE deciding the fields below."
+        ),
+    )
+    omission_type: OmissionType = Field(
+        description=(
+            "deliberate = filler/meta/off-topic, rightly skipped by pass 1; "
+            "accidental = a genuine miss (the fragment carried codeable content)."
+        ),
+    )
+    contains_evidence: bool = Field(
+        description="True if this fragment contains un-extracted analytical evidence.",
+    )
+    recovered_evidence: Optional[List["RawICCandidate"]] = Field(
+        default=None,
+        description=(
+            "Codes recovered from this fragment (only if contains_evidence). Each "
+            "carries an EXACT verbatim quote_text — NO character offsets (the system "
+            "locates the quote). Null/empty when nothing is recovered."
+        ),
+    )
+
+
+class SecondPassResult(BaseModel):
+    """
+    Pass-2 (omitted-text audit) response for one review/segment.
+
+    Instructor response_model: aggregates one assessment per `<omitted>` fragment
+    surfaced in the omitted-view of the review.
+    """
+    segment_id: str
+    fragments: List[OmittedFragmentAssessment] = Field(default_factory=list)
 
 
 class ComparatorRecommendation(str, Enum):

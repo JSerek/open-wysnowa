@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-PIPELINE_VERSION = "v2-phase1"
+PIPELINE_VERSION = "v2-phase2"
 
 
 # ── Manifest ──────────────────────────────────────────────────────────────────

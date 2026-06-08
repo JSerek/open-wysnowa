@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.extraction.coder_agent import CoderAgent
 from src.extraction.codebook_comparator import CodebookComparator
+from src.extraction.second_pass_agent import SecondPassAgent
 from src.core.config import EQDConfig, ModelClient
 from src.core.reasoning_log import ReasoningLogger
 from src.core.db import (
@@ -191,6 +192,10 @@ class Layer1Orchestrator:
         self.comparator = CodebookComparator(
             model_client, self.embedding_service, db, config, reasoning_logger,
         )
+        # Pass-2 (omitted-text audit) agent — same generative slot as the coder.
+        self.second_pass_agent = SecondPassAgent(
+            model_client, db, config, reasoning_logger,
+        )
 
         # ITS tracking
         self.its_tracker = ITSTracker(
@@ -222,14 +227,20 @@ class Layer1Orchestrator:
         enable_hil: bool = True,
     ) -> Dict[str, Any]:
         """
-        Process segments through the full Layer 1 pipeline.
+        Process segments through the full Layer 1 pipeline (v2 two-pass).
+
+        The unit of two-pass processing is the REVIEW (segment): for each review
+        we run pass 1 (coder → decision track), snapshot pass-1 density, build the
+        omitted-view, run pass 2 (omitted-text audit → recover → DEDUP overlap →
+        same decision track), snapshot pass-2 density — then move to the next
+        review. ITS / saturation tracking stays per BATCH (groups of reviews).
 
         Args:
             segments: preprocessed Segment objects to code
             enable_hil: if True, prompt human for each new IC (default True)
 
         Returns:
-            Summary dict with statistics.
+            Summary dict with statistics (incl. density_snapshots + pass2_stats).
         """
         batch_size = self.config.processing.batch_size
         total_batches = math.ceil(len(segments) / batch_size) if segments else 0
@@ -238,7 +249,7 @@ class Layer1Orchestrator:
             "total_segments": len(segments),
             "total_batches": total_batches,
             "batches_processed": 0,
-            "total_candidates": 0,
+            "total_candidates": 0,   # pass-1 grounded candidates (drop-rate denom)
             "new_ics_created": 0,
             "merged": 0,
             "rejected": 0,
@@ -260,221 +271,81 @@ class Layer1Orchestrator:
             "coder_new_comp_new": 0,
             "coder_new_comp_merge": 0,
             "coder_new_comp_reject": 0,
+            # ── Pass-2 (omitted-text audit) ────────────────────────────────
+            # Per-review two-point density snapshots (contract #13): in-memory,
+            # not a DB end-of-run aggregate.
+            "density_snapshots": [],  # [{segment_id, char_count, density_pass1,
+                                      #   density_pass2, recovered}]
+            "pass2_stats": {
+                "fragments_total": 0,        # omitted fragments assessed
+                "deliberate": 0,             # omission_type counts
+                "accidental": 0,
+                "contains_evidence_true": 0,
+                "recovered_candidates": 0,   # raw recovered before grounding
+                "recovered_hallucinated": 0, # dropped by the pass-2 grounding gate
+                "overlap_drops": 0,          # dropped by the DEDUP-overlap gate
+                "recovered_accepted": 0,     # passed the judge (NEW or MERGE)
+            },
         }
 
         batch_num = 0
         for batch in batch_segments(segments, batch_size):
             batch_num += 1
+            logger.info(f"[BATCH] Batch {batch_num}: {len(batch)} reviews (two-pass)")
 
-            # ── 1. Run Coder Agent ────────────────────────────────────────
-            logger.info(f"[BATCH] Batch {batch_num}: coding {len(batch)} segments")
-            coding_results = self.coder_agent.process_batch(batch)
-
-            # Accumulate drop counts (span validation failures) from this batch
-            for seg_id, n_dropped in self.coder_agent.last_drop_counts.items():
-                summary["total_dropped"] += n_dropped
-                prev = summary["dropped_per_segment"].get(seg_id, 0)
-                summary["dropped_per_segment"][seg_id] = prev + n_dropped
-
-            # ── 2. Flatten candidates (single decision track) ─────────────
-            # (candidate, segment_id, canonical_text). v2: NO existing-match
-            # shortcut — every candidate goes through the judge. existing_code_match
-            # is recorded as a logged signal only (coder_reuse matrix).
-            all_candidates: List[Tuple[ICCandidate, str, str]] = []
-
-            # Track saturation: assign a segment_index to each segment
-            segment_indices: Dict[str, int] = {}
-            for segment in batch:
-                segment_indices[segment.id] = self.its_tracker.record_segment()
-
-            for segment in batch:
-                candidates = coding_results.get(segment.id, [])
-                summary["total_candidates"] += len(candidates)
-
-                for cand in candidates:
-                    if cand.existing_code_match is not None:
-                        # Logged signal: coder recognised its own codebook (does NOT route)
-                        summary["coder_flagged_match"] += 1
-                    all_candidates.append((cand, segment.id, segment.canonical_text))
-
-            # ── 3. Pre-embed all candidate texts (1 batch API call) ───────
-            deferred_quotes: List[VerbatimQuote] = []
-            batch_new_count = 0
-            precomputed_embeddings: List[List[float]] = []
-
-            if all_candidates:
-                candidate_texts = [
-                    f"{c.ic_name} | {c.definition}" for c, _, _ in all_candidates
-                ]
-                logger.debug(
-                    f"[EMBED] Batch-embedding {len(candidate_texts)} candidate texts"
-                )
-                precomputed_embeddings = self.embedding_service.embed_texts_batch(
-                    candidate_texts
-                )
-
-            # ── 4. Process every candidate through the judge + HIL ────────
-            if enable_hil and all_candidates:
+            if enable_hil:
                 its_history = self.its_tracker.history
                 latest_its = its_history[-1].its_value if its_history else None
                 display_batch_header(
                     batch_num, total_batches,
-                    self.ic_repo.count_active(), len(all_candidates),
+                    self.ic_repo.count_active(), len(batch),
                     its_value=latest_its,
                     session_new=summary["new_ics_created"],
                     session_merged=summary["merged"],
                     session_rejected=summary["rejected"],
                 )
 
+            deferred_quotes: List[VerbatimQuote] = []
+            # Single-step undo context shared across the whole batch (both passes).
+            undo_state: Dict[str, Any] = {
+                "ctx": None, "deferred_quotes": deferred_quotes, "ic_defs": {},
+            }
+            batch_new_count = 0
             batch_merge_count = 0
-            last_undo_ctx: Optional[Dict] = None  # single-step undo context
+            batch_judged_count = 0  # candidates that reached the judge (merge-rate denom)
 
-            for idx, (cand, seg_id, seg_text) in enumerate(all_candidates, 1):
-                # 4a. Run Codebook Comparator (judge) with precomputed embedding
-                cand_embedding = precomputed_embeddings[idx - 1] if precomputed_embeddings else None
-                comp_output, top_k, decision_meta = self.comparator.evaluate(
-                    cand, precomputed_embedding=cand_embedding
+            for segment in batch:
+                seg_idx = self.its_tracker.record_segment()
+                rev = self._process_review(
+                    segment, seg_idx, summary, deferred_quotes,
+                    enable_hil, undo_state,
                 )
-
-                # Track decision path (empty_codebook shortcut vs LLM judge)
-                decision_path = decision_meta.get("decision_path", "unknown")
-                if decision_path in self.decision_paths:
-                    self.decision_paths[decision_path] += 1
-
-                if enable_hil:
-                    # Build ic_definitions for top-K display (on-demand, small N)
-                    ic_defs: Dict[str, str] = {}
-                    for sim in top_k:
-                        ic = self.ic_repo.get_by_id(sim.ic_id)
-                        if ic:
-                            ic_defs[sim.ic_id] = ic.definition
-
-                    # 4b. Display for human review
-                    display_candidate_review(
-                        cand, comp_output, top_k, seg_text,
-                        idx, len(all_candidates),
-                        segment_id=seg_id,
-                        ic_definitions=ic_defs,
-                    )
-
-                    # 4c. Get human decision (may loop for edit or undo)
-                    undo_state = {
-                        "ctx": last_undo_ctx,
-                        "deferred_quotes": deferred_quotes,
-                        "ic_defs": ic_defs,
-                    }
-                    action, target_idx, notes = self._hil_loop(
-                        cand, comp_output, top_k, seg_text,
-                        idx, len(all_candidates),
-                        seg_id=seg_id,
-                        undo_state=undo_state,
-                    )
-                    # Sync last_undo_ctx in case undo fired inside _hil_loop
-                    last_undo_ctx = undo_state["ctx"]
-
-                    if action == "Q":
-                        summary["quit_early"] = True
-                        break
-                else:
-                    # Auto-accept LLM recommendation
-                    action = comp_output.recommendation.value[0]  # N, M, R → first char
-                    target_idx = 1 if action == "M" and top_k else None
-                    notes = "auto-accepted (HIL disabled)"
-
-                # 4d. Apply decision (IC embed + persist happens immediately
-                #     for NEW so next candidate's comparator sees it;
-                #     quote embed is deferred)
-                result, quote, new_ic_id = self._apply_decision(
-                    action=action,
-                    candidate=cand,
-                    segment_id=seg_id,
-                    comp_output=comp_output,
-                    top_k=top_k,
-                    target_idx=target_idx,
-                    notes=notes,
-                    defer_quote_embed=True,
-                )
-
-                if quote:
-                    deferred_quotes.append(quote)
-
-                if result == "new":
-                    summary["new_ics_created"] += 1
-                    batch_new_count += 1
-                    summary["coder_new_comp_new"] += 1
-                    # Track coder confidence for this accepted IC
-                    if hasattr(cand, "confidence") and cand.confidence is not None:
-                        summary["new_ic_confidences"].append(cand.confidence)
-                        if cand.confidence < 0.6 and new_ic_id:
-                            summary["low_confidence_ic_ids"].append(new_ic_id)
-                    # Track cumulative saturation: which segment introduced this IC
-                    seg_idx = segment_indices.get(seg_id)
-                    if seg_idx is not None:
-                        prev = self.its_tracker._new_ics_per_segment.get(seg_idx, 0)
-                        self.its_tracker._new_ics_per_segment[seg_idx] = prev + 1
-                    # Track IC creation segment for meaning saturation breadth
-                    if new_ic_id and seg_idx is not None:
-                        self.ic_creation_segments[new_ic_id] = seg_idx
-                    # Build undo context
-                    last_undo_ctx = {
-                        "action": "new", "description": f"NEW: {cand.ic_name}",
-                        "ic_id": new_ic_id, "quote_id": quote.id if quote else None,
-                        "deferred_quote_ref": quote,
-                    }
-                elif result == "merge":
-                    summary["merged"] += 1
-                    batch_merge_count += 1
-                    summary["coder_new_comp_merge"] += 1
-                    target_name = top_k[target_idx - 1].ic_name if target_idx and top_k else "?"
-                    last_undo_ctx = {
-                        "action": "merge",
-                        "description": f"MERGE: {cand.ic_name} → {target_name}",
-                        "ic_id": None, "quote_id": quote.id if quote else None,
-                        "deferred_quote_ref": quote,
-                    }
-                elif result == "reject":
-                    summary["rejected"] += 1
-                    summary["coder_new_comp_reject"] += 1
-                    last_undo_ctx = {
-                        "action": "reject", "description": f"REJECT: {cand.ic_name}",
-                        "ic_id": None, "quote_id": None, "deferred_quote_ref": None,
-                    }
-
-                # 4e. Full per-candidate traceability (Appendix B)
-                if self.reasoning_logger:
-                    self.reasoning_logger.log_candidate({
-                        "pass": 1,
-                        "segment_id": seg_id,
-                        "ic_name": cand.ic_name,
-                        "quote_text": cand.quote_text,
-                        "span_start": cand.span_start,
-                        "span_end": cand.span_end,
-                        "grounded": True,  # only grounded candidates reach the judge
-                        "coder_existing_code_match": cand.existing_code_match,
-                        "top_k": [
-                            {"ic_id": s.ic_id, "ic_name": s.ic_name,
-                             "sim": round(s.similarity, 4)}
-                            for s in top_k
-                        ],
-                        "decision_path": decision_path,
-                        "judge_verdict": comp_output.recommendation.value,
-                        "judge_reasoning": comp_output.reasoning,
-                        "final_action": result,
-                    })
+                batch_new_count += rev["n_new"]
+                batch_merge_count += rev["n_merge"]
+                batch_judged_count += rev["n_judged"]
+                summary["density_snapshots"].append({
+                    "segment_id": segment.id,
+                    "char_count": rev["char_count"],
+                    "density_pass1": rev["density_pass1"],
+                    "density_pass2": rev["density_pass2"],
+                    "recovered": rev["recovered"],
+                })
+                if rev["quit_early"]:
+                    summary["quit_early"] = True
+                    break
 
             # Record per-batch merge rate (denominator = all candidates judged)
             self.batch_merge_rates.append({
                 "batch_num": batch_num,
-                "new_candidates": len(all_candidates),
+                "new_candidates": batch_judged_count,
                 "merges": batch_merge_count,
                 "batch_new": batch_new_count,
             })
 
-            # ── 6. Batch-embed all deferred quotes (1 API call) ──────────
+            # ── Batch-embed all deferred quotes (1 API call) ─────────────
             if deferred_quotes:
                 logger.debug(f"[EMBED] Batch-embedding {len(deferred_quotes)} quotes")
                 self.embedding_service.batch_embed_quotes(deferred_quotes)
-                # Update DB with embeddings
                 for quote in deferred_quotes:
                     self.quote_repo.update_embedding(quote)
 
@@ -482,7 +353,7 @@ class Layer1Orchestrator:
                 logger.info(f"Human quit at batch {batch_num}")
                 break
 
-            # ── 7. Track ITS ──────────────────────────────────────────────
+            # ── Track ITS ─────────────────────────────────────────────────
             ics_before = self.ic_repo.count_active()
             batch_its = self.its_tracker.record_batch(
                 batch_num, ics_before, batch_new_count,
@@ -495,7 +366,7 @@ class Layer1Orchestrator:
                 )
                 display_its_status(batch_its)
 
-            # ── 8. Saturation checkpoint ──────────────────────────────────
+            # ── Saturation checkpoint ─────────────────────────────────────
             if batch_its.is_checkpoint and enable_hil:
                 should_continue = prompt_saturation_checkpoint()
                 if not should_continue:
@@ -534,6 +405,340 @@ class Layer1Orchestrator:
             summary["low_confidence_ic_count"] = 0
 
         return summary
+
+    # ── Per-review two-pass processing ───────────────────────────────────────
+
+    def _process_review(
+        self,
+        segment: Segment,
+        seg_idx: int,
+        summary: Dict[str, Any],
+        deferred_quotes: List[VerbatimQuote],
+        enable_hil: bool,
+        undo_state: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Run the full two-pass flow for ONE review (segment).
+
+        pass1: coder.extract (fresh codebook) → decision track → density_pass1
+        pass2: omitted-view → audit → ground → DEDUP overlap → decision track
+               → density_pass2
+
+        Returns per-review stats: n_new, n_merge, n_judged, char_count,
+        density_pass1, density_pass2, recovered (bool), quit_early (bool).
+        """
+        seg_id = segment.id
+        seg_text = segment.canonical_text
+        char_count = segment.char_count or len(seg_text)
+        seg_index_map = {seg_id: seg_idx}
+        n_new = n_merge = n_judged = 0
+        quit_early = False
+
+        # ── PASS 1 ────────────────────────────────────────────────────────
+        # One LLM call for this review; process_batch refetches the codebook,
+        # so review N's pass 1 sees ICs created by earlier reviews in the batch.
+        coding = self.coder_agent.process_batch([segment])
+        pass1_cands = coding.get(seg_id, [])
+        n_dropped = self.coder_agent.last_drop_counts.get(seg_id, 0)
+        summary["total_dropped"] += n_dropped
+        summary["dropped_per_segment"][seg_id] = (
+            summary["dropped_per_segment"].get(seg_id, 0) + n_dropped
+        )
+        summary["total_candidates"] += len(pass1_cands)
+
+        pass1_spans: List[Tuple[int, int]] = []
+        pass1_embeddings = self._embed_candidates(pass1_cands)
+        for i, cand in enumerate(pass1_cands):
+            emb = pass1_embeddings[i] if pass1_embeddings else None
+            result, quote = self._decide_and_apply(
+                cand, seg_id, seg_text, emb, summary, deferred_quotes,
+                enable_hil, i + 1, len(pass1_cands), seg_index_map,
+                undo_state, pass_num=1,
+            )
+            if result == "quit":
+                quit_early = True
+                break
+            n_judged += 1
+            if result == "new":
+                n_new += 1
+            elif result == "merge":
+                n_merge += 1
+            if quote is not None:
+                pass1_spans.append((quote.span_start, quote.span_end))
+
+        density_pass1 = self._density(pass1_spans, char_count)
+
+        if quit_early:
+            return {
+                "n_new": n_new, "n_merge": n_merge, "n_judged": n_judged,
+                "char_count": char_count, "density_pass1": density_pass1,
+                "density_pass2": density_pass1, "recovered": False,
+                "quit_early": True,
+            }
+
+        # ── PASS 2: omitted-text audit ────────────────────────────────────
+        second = self.second_pass_agent.assess_omitted(segment, pass1_spans)
+        recovered: List[Tuple[ICCandidate, Dict[str, Any]]] = []
+
+        for frag in second.fragments:
+            otype = frag.omission_type.value  # "deliberate" | "accidental"
+            summary["pass2_stats"]["fragments_total"] += 1
+            summary["pass2_stats"][otype] = summary["pass2_stats"].get(otype, 0) + 1
+            if frag.contains_evidence:
+                summary["pass2_stats"]["contains_evidence_true"] += 1
+
+            # Log the fragment assessment itself (pass:2) — even with no recovery.
+            if self.reasoning_logger:
+                self.reasoning_logger.log_record({
+                    "type": "omitted_fragment",
+                    "pass": 2,
+                    "segment_id": seg_id,
+                    "omitted_text": frag.omitted_text,
+                    "reasoning": frag.reasoning,
+                    "omission_type": otype,
+                    "contains_evidence": frag.contains_evidence,
+                    "recovered_count": len(frag.recovered_evidence or []),
+                })
+
+            for raw in (frag.recovered_evidence or []):
+                summary["pass2_stats"]["recovered_candidates"] += 1
+                # Grounding gate (Tier 1) — span via find(); hallucination → drop.
+                cand = CoderAgent._ground_candidate(raw, segment)
+                if cand is None:
+                    summary["pass2_stats"]["recovered_hallucinated"] += 1
+                    if self.reasoning_logger:
+                        self.reasoning_logger.log_record({
+                            "type": "pass2_grounding_drop",
+                            "pass": 2, "segment_id": seg_id,
+                            "ic_name": raw.ic_name, "quote_text": raw.quote_text,
+                            "omission_type": otype, "grounded": False,
+                            "final_action": "grounding_drop",
+                        })
+                    continue
+                # DEDUP overlap gate — drop if span overlaps any accepted pass-1 span.
+                if self._overlaps_any((cand.span_start, cand.span_end), pass1_spans):
+                    summary["pass2_stats"]["overlap_drops"] += 1
+                    if self.reasoning_logger:
+                        self.reasoning_logger.log_record({
+                            "type": "candidate", "pass": 2, "segment_id": seg_id,
+                            "ic_name": cand.ic_name, "quote_text": cand.quote_text,
+                            "span_start": cand.span_start, "span_end": cand.span_end,
+                            "grounded": True, "omission_type": otype,
+                            "contains_evidence": frag.contains_evidence,
+                            "reasoning": frag.reasoning,
+                            "pass2_overlap_drop": True,
+                            "final_action": "overlap_drop",
+                        })
+                    continue
+                recovered.append((cand, {
+                    "omission_type": otype,
+                    "contains_evidence": frag.contains_evidence,
+                    "reasoning": frag.reasoning,
+                    "pass2_overlap_drop": False,
+                }))
+
+        pass2_spans: List[Tuple[int, int]] = []
+        rec_embeddings = self._embed_candidates([c for c, _ in recovered])
+        for i, (cand, pass2_fields) in enumerate(recovered):
+            emb = rec_embeddings[i] if rec_embeddings else None
+            result, quote = self._decide_and_apply(
+                cand, seg_id, seg_text, emb, summary, deferred_quotes,
+                enable_hil, i + 1, len(recovered), seg_index_map,
+                undo_state, pass_num=2, pass2_fields=pass2_fields,
+            )
+            if result == "quit":
+                quit_early = True
+                break
+            n_judged += 1
+            if result in ("new", "merge"):
+                summary["pass2_stats"]["recovered_accepted"] += 1
+            if result == "new":
+                n_new += 1
+            elif result == "merge":
+                n_merge += 1
+            if quote is not None:
+                pass2_spans.append((quote.span_start, quote.span_end))
+
+        density_pass2 = self._density(pass1_spans + pass2_spans, char_count)
+        return {
+            "n_new": n_new, "n_merge": n_merge, "n_judged": n_judged,
+            "char_count": char_count,
+            "density_pass1": density_pass1,
+            "density_pass2": density_pass2,
+            "recovered": len(pass2_spans) > 0,
+            "quit_early": quit_early,
+        }
+
+    def _decide_and_apply(
+        self,
+        cand: ICCandidate,
+        seg_id: str,
+        seg_text: str,
+        cand_embedding: Optional[List[float]],
+        summary: Dict[str, Any],
+        deferred_quotes: List[VerbatimQuote],
+        enable_hil: bool,
+        cand_num: int,
+        total_in_pass: int,
+        segment_indices: Dict[str, int],
+        undo_state: Dict[str, Any],
+        pass_num: int,
+        pass2_fields: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Optional[VerbatimQuote]]:
+        """
+        Run ONE candidate through the shared decision track:
+        judge → (HIL or auto-accept) → apply → summary counters → reasoning_log.
+
+        Used by both pass 1 and pass 2 (DRY). Returns (result, quote) where
+        result ∈ {"new","merge","reject","quit"} and quote is the persisted
+        VerbatimQuote for new/merge (carries the accepted span), else None.
+        """
+        # Logged signal only (coder_reuse matrix) — does NOT route.
+        if cand.existing_code_match is not None:
+            summary["coder_flagged_match"] += 1
+
+        # 1. Judge (embedding shortlist already computed)
+        comp_output, top_k, decision_meta = self.comparator.evaluate(
+            cand, precomputed_embedding=cand_embedding
+        )
+        decision_path = decision_meta.get("decision_path", "unknown")
+        if decision_path in self.decision_paths:
+            self.decision_paths[decision_path] += 1
+
+        if enable_hil:
+            ic_defs: Dict[str, str] = {}
+            for sim in top_k:
+                ic = self.ic_repo.get_by_id(sim.ic_id)
+                if ic:
+                    ic_defs[sim.ic_id] = ic.definition
+            display_candidate_review(
+                cand, comp_output, top_k, seg_text,
+                cand_num, total_in_pass, segment_id=seg_id, ic_definitions=ic_defs,
+            )
+            undo_state["ic_defs"] = ic_defs
+            action, target_idx, notes = self._hil_loop(
+                cand, comp_output, top_k, seg_text,
+                cand_num, total_in_pass, seg_id=seg_id, undo_state=undo_state,
+            )
+            if action == "Q":
+                return "quit", None
+        else:
+            action = comp_output.recommendation.value[0]  # N, M, R → first char
+            target_idx = 1 if action == "M" and top_k else None
+            notes = "auto-accepted (HIL disabled)"
+
+        # 2. Apply decision (IC embed/persist immediate for NEW; quote embed deferred)
+        result, quote, new_ic_id = self._apply_decision(
+            action=action, candidate=cand, segment_id=seg_id,
+            comp_output=comp_output, top_k=top_k, target_idx=target_idx,
+            notes=notes, defer_quote_embed=True,
+        )
+
+        if quote is not None:
+            deferred_quotes.append(quote)
+
+        if result == "new":
+            summary["new_ics_created"] += 1
+            summary["coder_new_comp_new"] += 1
+            if cand.confidence is not None:
+                summary["new_ic_confidences"].append(cand.confidence)
+                if cand.confidence < 0.6 and new_ic_id:
+                    summary["low_confidence_ic_ids"].append(new_ic_id)
+            seg_idx = segment_indices.get(seg_id)
+            if seg_idx is not None:
+                prev = self.its_tracker._new_ics_per_segment.get(seg_idx, 0)
+                self.its_tracker._new_ics_per_segment[seg_idx] = prev + 1
+                if new_ic_id:
+                    self.ic_creation_segments[new_ic_id] = seg_idx
+            undo_state["ctx"] = {
+                "action": "new", "description": f"NEW: {cand.ic_name}",
+                "ic_id": new_ic_id, "quote_id": quote.id if quote else None,
+                "deferred_quote_ref": quote,
+            }
+        elif result == "merge":
+            summary["merged"] += 1
+            summary["coder_new_comp_merge"] += 1
+            target_name = top_k[target_idx - 1].ic_name if target_idx and top_k else "?"
+            undo_state["ctx"] = {
+                "action": "merge",
+                "description": f"MERGE: {cand.ic_name} → {target_name}",
+                "ic_id": None, "quote_id": quote.id if quote else None,
+                "deferred_quote_ref": quote,
+            }
+        elif result == "reject":
+            summary["rejected"] += 1
+            summary["coder_new_comp_reject"] += 1
+            undo_state["ctx"] = {
+                "action": "reject", "description": f"REJECT: {cand.ic_name}",
+                "ic_id": None, "quote_id": None, "deferred_quote_ref": None,
+            }
+
+        # 3. Full per-candidate traceability (Appendix B). pass2_fields adds
+        #    omission_type / contains_evidence / reasoning / pass2_overlap_drop.
+        if self.reasoning_logger:
+            record: Dict[str, Any] = {
+                "pass": pass_num,
+                "segment_id": seg_id,
+                "ic_name": cand.ic_name,
+                "quote_text": cand.quote_text,
+                "span_start": cand.span_start,
+                "span_end": cand.span_end,
+                "grounded": True,
+                "coder_existing_code_match": cand.existing_code_match,
+                "top_k": [
+                    {"ic_id": s.ic_id, "ic_name": s.ic_name,
+                     "sim": round(s.similarity, 4)}
+                    for s in top_k
+                ],
+                "decision_path": decision_path,
+                "judge_verdict": comp_output.recommendation.value,
+                "judge_reasoning": comp_output.reasoning,
+                "final_action": result,
+            }
+            if pass2_fields:
+                record.update(pass2_fields)
+            self.reasoning_logger.log_candidate(record)
+
+        return result, quote
+
+    # ── Small span helpers ───────────────────────────────────────────────────
+
+    def _embed_candidates(
+        self, candidates: List[ICCandidate]
+    ) -> List[List[float]]:
+        """Batch-embed candidate texts (name | definition); [] when empty."""
+        if not candidates:
+            return []
+        texts = [f"{c.ic_name} | {c.definition}" for c in candidates]
+        return self.embedding_service.embed_texts_batch(texts)
+
+    @staticmethod
+    def _covered_chars(spans: List[Tuple[int, int]]) -> int:
+        """Total characters covered by the union of spans (merging overlaps)."""
+        if not spans:
+            return 0
+        sorted_spans = sorted(spans)
+        merged = [list(sorted_spans[0])]
+        for start, end in sorted_spans[1:]:
+            if start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        return sum(end - start for start, end in merged)
+
+    def _density(self, spans: List[Tuple[int, int]], char_count: int) -> float:
+        """Span-union coverage as a fraction of the review's character count."""
+        if char_count <= 0:
+            return 0.0
+        return round(self._covered_chars(spans) / char_count, 4)
+
+    @staticmethod
+    def _overlaps_any(
+        span: Tuple[int, int], others: List[Tuple[int, int]]
+    ) -> bool:
+        """True if `span` overlaps any interval in `others` (max(s,s1)<min(e,e1))."""
+        s, e = span
+        return any(max(s, s1) < min(e, e1) for s1, e1 in others)
 
     # ── HIL Interaction Loop ─────────────────────────────────────────────────
 

@@ -159,6 +159,73 @@ Extract all Initial Codes from this segment. Return a SegmentCodingResult."""
 
 
 
+# ── Second-Pass (Omitted-Text Audit) Prompts ────────────────────────────────
+
+def build_second_pass_system_prompt(codebook_context: str) -> str:
+    """
+    System prompt for the second-pass agent (omitted-text audit).
+
+    The model receives the WHOLE review with every fragment that pass 1 did NOT
+    extract wrapped in <omitted>...</omitted>; extracted fragments appear as plain
+    text (what the coder already took). For each omitted fragment the model must:
+      1. reason FIRST (chain-of-thought),
+      2. classify the omission (deliberate vs accidental),
+      3. say whether it contains un-extracted evidence,
+      4. if so, recover codes with EXACT verbatim quotes (no offsets — the system
+         locates each quote in the review).
+
+    Same methodology as the coder (Braun & Clarke inductive coding); the only new
+    job is judging WHY each fragment was left out and recovering genuine misses.
+    """
+    return f"""You are an expert qualitative coder performing a SECOND-PASS audit of one review.
+
+CONTEXT: A first coding pass already extracted some Initial Codes (ICs) from this review. You are now shown the FULL review. Every fragment the first pass did NOT extract is wrapped in <omitted>...</omitted> tags. Fragments shown as plain text were already extracted — do NOT re-extract them.
+
+YOUR TASK: For EACH <omitted> fragment, decide why it was left out and whether the first pass missed any evidence.
+
+For every omitted fragment, produce an assessment with these fields IN THIS ORDER:
+1. omitted_text — the exact text of the fragment (copy it verbatim from inside the tags).
+2. reasoning — THINK FIRST: does this fragment carry analytically meaningful, un-extracted content about the product experience, or is it filler/meta/off-topic? Reason BEFORE deciding the fields below.
+3. omission_type:
+   - "deliberate" = the fragment is filler, connective tissue, meta-commentary, an overall verdict, or off-topic — rightly skipped. (Most omissions are deliberate.)
+   - "accidental" = the fragment carries codeable experiential content that the first pass overlooked (e.g. lost-in-the-middle).
+4. contains_evidence — true ONLY if the fragment holds un-extracted analytical evidence worth a code.
+5. recovered_evidence — if contains_evidence is true, list the recovered codes; otherwise null/empty.
+
+RULES FOR RECOVERED EVIDENCE (identical to first-pass coding):
+- STAY CLOSE TO DATA — code what the fragment explicitly says, no interpretive leaps.
+- EXACT VERBATIM QUOTES — quote_text MUST be a character-for-character substring of the review. Do NOT paraphrase, fix typos, normalise whitespace, merge non-adjacent fragments, or insert ellipses. You do NOT provide character offsets — the system locates your quote. If a quote is not found verbatim, that code is discarded.
+- The quote should come from inside the omitted fragment you are assessing.
+- NO META-COMMENTARY — do not recover codes about the overall verdict or other reviewers. Codes describe SPECIFIC aspects of the product experience.
+- DON'T FORCE RECOVERY — most omitted fragments are deliberate filler with no evidence. Recover a code only when the fragment genuinely holds an un-extracted meaning unit. Quality over quantity.
+- MATCH EXISTING CODES — if a recovered code matches an existing one in the codebook below, set existing_code_match to its name; otherwise null.
+- ASSESS SENTIMENT and NOVELTY CONFIDENCE for each recovered code exactly as in first-pass coding.
+
+{codebook_context}
+
+OUTPUT: Return a SecondPassResult with:
+- segment_id: the ID provided in the user prompt.
+- fragments: one assessment per <omitted> fragment, in order. If there are no omitted fragments, return an empty list."""
+
+
+def build_second_pass_user_prompt(segment_id: str, omitted_view: str) -> str:
+    """
+    User prompt for the second-pass agent — carries the omitted-view of the review.
+
+    The view interleaves already-extracted text (plain) with not-extracted
+    fragments wrapped in <omitted>...</omitted>. Quotes in recovered_evidence must
+    be copied verbatim from this text.
+    """
+    return f"""Segment ID: {segment_id}
+
+REVIEW (already-extracted text is shown plain; not-yet-extracted fragments are wrapped in <omitted>...</omitted>):
+---
+{omitted_view}
+---
+
+Assess EACH <omitted> fragment: reason first, classify deliberate/accidental, flag whether it contains un-extracted evidence, and recover codes (verbatim quotes) only for genuine misses. Return a SecondPassResult."""
+
+
 # ── Codebook Comparator Prompts ──────────────────────────────────────────────
 
 def build_comparator_system_prompt() -> str:
