@@ -10,7 +10,96 @@ status tag:
 
 > **v2 note (2026-06-06):** project pivoted to an L0–L1 evidence-extraction focus.
 > Active v2 backlog lives in `docs/v2/V2_ROADMAP.md`; harvested L1 baseline in
-> `docs/v2/V2_FOUNDATION.md`. Entries below are v1 test-run ideas, kept for reference.
+> `docs/v2/V2_FOUNDATION.md`. The **v2 Phase-3 follow-ups** section directly below
+> is current; the older entries further down (Singleton Ratio, Comparator Prompt,
+> Token Usage) are v1 test-run ideas, kept for reference.
+
+---
+
+## v2 Phase 3 — Leaderboard Follow-ups
+
+**Origin:** Phase 3 leaderboard implementation (commit `39e47c8`) + the
+`canonical_top10` live smoke (2026-06-08, or_smart vs or_fast × embed_openai,
+k=1). Tiered by leverage: T1 = trustworthiness of the matrix, T2 = missing
+decision axes, T3 = engineering hardening.
+
+### T1 — `embedding_separation_auc` is gen-model-dependent, not a pure embedding score `[explore]`
+
+**Problem:** In the smoke both columns shared one embedding
+(`text-embedding-3-small`), yet AUC differed (0.938 gemini-3-flash vs 0.907
+gpt-5-nano). The metric pairs the top-1 cosine with the **judge's** verdict, so it
+conflates the embedding's separability with the verdicts a given generative model
+produces. Comparing AUC *across* gen columns as if it scored the embedding is
+wrong.
+
+**Fix:** (a) add a caveat in `src/leaderboard/report.py` that AUC reads
+*within-column*, not across gen models; (b) the real unlock is a second embedding
+axis (see T2 entry) — only then does AUC compare embeddings as designed.
+
+### T1 — k≥3 repetition run for variance + AUC confidence interval `[ready]`
+
+**Problem:** Smoke was k=1, n=10 → point estimates, no error bars. Seed is
+best-effort and temperature > 0, so runs vary; AUC over ~30–50 pairs is noisy.
+
+**Fix:** run the harness with `-k 3` (architecture already threads
+`k_repeat_index`; `report.py` already renders mean ± sd). Optionally add a
+bootstrap CI to `compute_embedding_separation_auc` in `src/eval/l1_metrics.py` so
+small `n_pairs` differences aren't over-read.
+
+### T1 — pass-2 `accidental_omission_ratio` is self-assessed `[explore]`
+
+**Problem:** Strongest discriminator in the smoke (0.37 gemini vs 0.79 gpt-5-nano)
+but it measures what the model *says* about its own omissions, not ground truth —
+gpt-5-nano may simply over-label "accidental".
+
+**Fix:** explore a cross-model audit of pass-2 (a second model re-judges the
+omitted fragments) or a calibration check; meanwhile label the metric
+"self-assessed" in the rendered matrix so it isn't read as objective recall.
+
+### T2 — second embedding axis + IC-naming-consistency metric `[explore]`
+
+**Problem:** The embedding axis has only `embed_openai`, so the leaderboard can't
+actually compare embeddings — the headline reason AUC exists. (Also recorded in
+`docs/v2/V2_ROADMAP.md`.)
+
+**Fix:** add a second named embedding (e.g. `text-embedding-3-large` or an OSS
+model) to `eqd_config.yaml` `models:`; the harness already varies
+`agents.embedding.model`. Add an IC-naming-consistency metric (embedding-space
+coherence of IC names) as a second embedding-quality column.
+
+### T2 — multi-prompt axis (A/B coder/judge prompts) `[ready]`
+
+**Problem:** The leaderboard varies models but not prompts, yet prompt wording is
+a large lever on extraction quality.
+
+**Fix:** the run manifest already carries `coder_prompt_hash` / `judge_prompt_hash`
+— add a prompt-variant override to `src/leaderboard/harness.py` +
+`scripts/run_leaderboard.py` so the matrix can vary prompt alongside model.
+
+### T3 — hermetic eval-mode integration test `[ready]`
+
+**Problem:** Phase 3 tests use a stub pipeline; only the live (billable) smoke ever
+exercised the real `auc_pairs` flow comparator → summary → metrics.
+
+**Fix:** add a `tests/` integration test that runs the real `Layer1Orchestrator`
+in `eval_mode=True` with a mocked LLM + embedding, asserting `auc_pairs` are
+collected and surface in the metrics. Locks the wiring without API cost.
+
+### T3 — surface sample sizes (`n_pairs`) in the matrix `[ready]`
+
+**Problem:** A reader can't tell how many candidates feed each cell; a metric over
+3 pairs and over 300 look identical.
+
+**Fix:** plumb `n_pairs` (already returned by `compute_embedding_separation_auc`)
+into the matrix and show it in `src/leaderboard/report.py`, at least for AUC.
+
+### T3 — `runs/` artifact retention policy `[explore]`
+
+**Problem:** Per-run DBs + reasoning logs accumulate in `runs/` (gitignored); at
+k=N × many model combos this grows fast.
+
+**Fix:** define a retention/cleanup policy (e.g. keep manifests + metrics in the
+registry, prune per-run DBs older than N runs, or a `--keep-run-db` flag).
 
 ---
 
@@ -152,6 +241,20 @@ Required for cost-per-review estimates and model comparison economics.
 - The skill update (output_template.md + metric_reference.md) should happen
   alongside or just after the code change, not separately.
 
+**v2 leaderboard addendum (2026-06-08):** this is now a first-class leaderboard
+axis, not just a report line. The Phase-3 smoke showed gemini-3-flash ~6m40s vs
+gpt-5-nano ~15m40s on 10 reviews (2.3× slower) — cost/latency weighs as much as
+quality in a "which model" decision, and the matrix captures neither today. Plan:
+capture per-run **wall-clock latency** + **token usage** (`usage` field on each
+OpenRouter/OpenAI response) into the run manifest/`run_metrics`, then add
+cost/latency columns to `src/leaderboard/report.py`. The long-format registry
+already supports this with no schema change. Touch points: agent `_call_llm`
+methods (token capture), `EQDPipeline.run` (wall-clock), `pipeline._flatten_metrics`.
+
 ---
 
 *Created: 2026-03-04*
+*Last updated: 2026-06-08 — Added "v2 Phase 3 — Leaderboard Follow-ups" section
+(8 entries across T1 trustworthiness / T2 missing axes / T3 hardening) from the
+canonical_top10 live smoke; extended Token Usage Tracking into a leaderboard
+cost/latency axis.*
