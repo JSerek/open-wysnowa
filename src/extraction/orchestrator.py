@@ -220,6 +220,7 @@ class Layer1Orchestrator:
         self.decision_paths: Dict[str, int] = {
             "empty_codebook": 0,
             "llm": 0,
+            "llm_failed": 0,   # judge call raised → fallback NEW (P0: judge_failure_rate)
         }
         # Per-batch merge rates: [{batch_num, new_candidates, merges, batch_new}]
         self.batch_merge_rates: List[Dict[str, Any]] = []
@@ -265,6 +266,10 @@ class Layer1Orchestrator:
             "grounding_drop_classes": {},   # {drop_class: n}
             "ambiguous_occurrences": {"first_free": 0, "first_fallback": 0},
             "accepted_quotes_total": 0,     # candidates passing the gate (pass 1 + 2)
+            # Judge reliability (P0). merge_target_unresolved: --no-hil MERGE whose
+            # merge_target_name is not on the shortlist → fallback NEW.
+            "merge_target_unresolved": 0,
+            "judge_merge_verdicts": 0,
             # Coder confidence — collected for new ICs only (not merges or rejects)
             "new_ic_confidences": [],
             # IDs of new ICs whose coder confidence fell below 0.6 — surfaced at sign-off
@@ -635,6 +640,8 @@ class Layer1Orchestrator:
         decision_path = decision_meta.get("decision_path", "unknown")
         if decision_path in self.decision_paths:
             self.decision_paths[decision_path] += 1
+        if comp_output.recommendation == ComparatorRecommendation.MERGE:
+            summary["judge_merge_verdicts"] += 1
 
         if enable_hil:
             ic_defs: Dict[str, str] = {}
@@ -655,8 +662,18 @@ class Layer1Orchestrator:
                 return "quit", None
         else:
             action = comp_output.recommendation.value[0]  # N, M, R → first char
-            target_idx = 1 if action == "M" and top_k else None
+            target_idx = None
             notes = "auto-accepted (HIL disabled)"
+            if action == "M":
+                target_idx = self._resolve_merge_target(
+                    comp_output.merge_target_name, top_k
+                )
+                if target_idx is None:
+                    # Judge named a target outside the shortlist (or none) — do not
+                    # guess. Fall back to NEW and count it (P0).
+                    action = "N"
+                    notes = "auto-accepted; MERGE target unresolved → fallback NEW"
+                    summary["merge_target_unresolved"] += 1
 
         # 2. Apply decision (IC embed/persist immediate for NEW; quote embed deferred)
         result, quote, new_ic_id = self._apply_decision(
@@ -726,6 +743,12 @@ class Layer1Orchestrator:
                 "decision_path": decision_path,
                 "judge_verdict": comp_output.recommendation.value,
                 "judge_reasoning": comp_output.reasoning,
+                "judge_failed": decision_meta.get("judge_failed", False),
+                "merge_target_name": comp_output.merge_target_name,
+                "merge_target_resolved": (
+                    top_k[target_idx - 1].ic_name
+                    if result == "merge" and target_idx and top_k else None
+                ),
                 "final_action": result,
             }
             if pass2_fields:
@@ -779,6 +802,28 @@ class Layer1Orchestrator:
         summary["accepted_quotes_total"] += 1
         if cand.occurrence_resolution in ("first_free", "first_fallback"):
             summary["ambiguous_occurrences"][cand.occurrence_resolution] += 1
+
+    @staticmethod
+    def _resolve_merge_target(
+        merge_target_name: Optional[str],
+        top_k: List[SimilarityResult],
+    ) -> Optional[int]:
+        """Map the judge's merge_target_name onto a 1-based top_k index.
+
+        Exact match first, then stripped + case-insensitive. None when the name is
+        missing or not on the shortlist (the judge may only merge into codes it
+        was shown).
+        """
+        if not merge_target_name or not top_k:
+            return None
+        for i, sim in enumerate(top_k, 1):
+            if sim.ic_name == merge_target_name:
+                return i
+        wanted = merge_target_name.strip().lower()
+        for i, sim in enumerate(top_k, 1):
+            if sim.ic_name.strip().lower() == wanted:
+                return i
+        return None
 
     # ── HIL Interaction Loop ─────────────────────────────────────────────────
 

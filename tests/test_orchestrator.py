@@ -15,6 +15,9 @@ from src.core.models import (
 from src.extraction.orchestrator import ITSTracker, Layer1Orchestrator
 from src.extraction.coder_agent import GroundingDrop
 from src.preprocessing import DropClass
+from src.core.db import InitialCodeRepo, VerbatimQuoteRepo
+from src.core.embeddings import SimilarityResult
+from src.core.models import ICStatus, InitialCode
 
 
 # ── ITS Tracker Tests ────────────────────────────────────────────────────────
@@ -86,63 +89,70 @@ class TestITSTracker:
 
 # ── Orchestrator Integration Tests ───────────────────────────────────────────
 
+@pytest.fixture
+def test_segment():
+    return Segment(
+        id="seg_test",
+        document_id="doc_test",
+        canonical_text="Produkt jest świetny, ale dostawa trwała zbyt długo.",
+        original_text="Produkt jest świetny, ale dostawa trwała zbyt długo.",
+        char_count=51,
+        segment_index=0,
+        content_hash="test_hash",
+    )
+
+@pytest.fixture
+def mock_orchestrator(db, test_segment):
+    """Create orchestrator with all sub-components mocked.
+
+    Seeds the DB with the test document and segment so FK constraints
+    are satisfied when the orchestrator persists ICs and quotes.
+    """
+    from src.core.db import DocumentRepo, SegmentRepo
+    from src.core.models import Document
+
+    # Seed DB with FK parents
+    DocumentRepo(db).insert(Document(id="doc_test", raw_text="test"))
+    SegmentRepo(db).insert(test_segment)
+
+    mc = MagicMock()
+    config = MagicMock()
+    config.processing.batch_size = 15
+    config.processing.its_saturation_threshold = 0.02
+    config.processing.its_consecutive_batches = 3
+    config.processing.similarity_prefilter_k = 5
+    config.processing.auto_new_threshold = 0.5
+    config.processing.auto_merge_threshold = 0.8
+
+    orch = Layer1Orchestrator(mc, db, config)
+
+    # Replace sub-components with mocks
+    orch.coder_agent = MagicMock()
+    orch.coder_agent.last_drop_counts = {}
+    orch.coder_agent.last_drops = {}
+    orch.comparator = MagicMock()
+    orch.embedding_service = MagicMock()
+    # Pass-2 audit mocked to a no-op (these tests exercise the pass-1 track).
+    orch.second_pass_agent = MagicMock()
+    orch.second_pass_agent.assess_omitted.return_value = SecondPassResult(
+        segment_id="seg_test", fragments=[],
+    )
+    # Candidate texts are batch-embedded per pass; return one vector per text.
+    orch.embedding_service.embed_texts_batch.side_effect = (
+        lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+    )
+
+    def fake_embed_ic(ic):
+        ic.embedding_json = [0.1, 0.2, 0.3]
+        return ic
+    orch.embedding_service.embed_ic.side_effect = fake_embed_ic
+    orch.embedding_service.embed_quote.side_effect = lambda q: q
+
+    return orch
+
+
 class TestLayer1Orchestrator:
     """Test orchestrator with fully mocked sub-components."""
-
-    @pytest.fixture
-    def test_segment(self):
-        return Segment(
-            id="seg_test",
-            document_id="doc_test",
-            canonical_text="Produkt jest świetny, ale dostawa trwała zbyt długo.",
-            original_text="Produkt jest świetny, ale dostawa trwała zbyt długo.",
-            char_count=51,
-            segment_index=0,
-            content_hash="test_hash",
-        )
-
-    @pytest.fixture
-    def mock_orchestrator(self, db, test_segment):
-        """Create orchestrator with all sub-components mocked.
-
-        Seeds the DB with the test document and segment so FK constraints
-        are satisfied when the orchestrator persists ICs and quotes.
-        """
-        from src.core.db import DocumentRepo, SegmentRepo
-        from src.core.models import Document
-
-        # Seed DB with FK parents
-        DocumentRepo(db).insert(Document(id="doc_test", raw_text="test"))
-        SegmentRepo(db).insert(test_segment)
-
-        mc = MagicMock()
-        config = MagicMock()
-        config.processing.batch_size = 15
-        config.processing.its_saturation_threshold = 0.02
-        config.processing.its_consecutive_batches = 3
-        config.processing.similarity_prefilter_k = 5
-        config.processing.auto_new_threshold = 0.5
-        config.processing.auto_merge_threshold = 0.8
-
-        orch = Layer1Orchestrator(mc, db, config)
-
-        # Replace sub-components with mocks
-        orch.coder_agent = MagicMock()
-        orch.coder_agent.last_drop_counts = {}
-        orch.coder_agent.last_drops = {}
-        orch.comparator = MagicMock()
-        orch.embedding_service = MagicMock()
-        # Pass-2 audit mocked to a no-op (these tests exercise the pass-1 track).
-        orch.second_pass_agent = MagicMock()
-        orch.second_pass_agent.assess_omitted.return_value = SecondPassResult(
-            segment_id="seg_test", fragments=[],
-        )
-        # Candidate texts are batch-embedded per pass; return one vector per text.
-        orch.embedding_service.embed_texts_batch.side_effect = (
-            lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
-        )
-
-        return orch
 
     def test_empty_segments(self, mock_orchestrator):
         result = mock_orchestrator.run([], enable_hil=False)
@@ -319,3 +329,117 @@ class TestLayer1Orchestrator:
         assert rec["occurrence_resolution"] == "unique"
         assert result["accepted_quotes_total"] == 1
         assert result["ambiguous_occurrences"] == {"first_free": 0, "first_fallback": 0}
+
+
+class TestMergeTargetResolution:
+    TOP_K = [
+        SimilarityResult(ic_id="ic_a", ic_name="delivery_speed", similarity=0.90),
+        SimilarityResult(ic_id="ic_b", ic_name="Delivery_Delay", similarity=0.80),
+    ]
+
+    def test_resolve_exact(self):
+        assert Layer1Orchestrator._resolve_merge_target("delivery_speed", self.TOP_K) == 1
+
+    def test_resolve_second(self):
+        assert Layer1Orchestrator._resolve_merge_target("Delivery_Delay", self.TOP_K) == 2
+
+    def test_resolve_strips_and_ignores_case(self):
+        assert Layer1Orchestrator._resolve_merge_target("  delivery_delay \n", self.TOP_K) == 2
+
+    def test_resolve_outside_shortlist(self):
+        assert Layer1Orchestrator._resolve_merge_target("price_complaint", self.TOP_K) is None
+
+    def test_resolve_none_and_empty(self):
+        assert Layer1Orchestrator._resolve_merge_target(None, self.TOP_K) is None
+        assert Layer1Orchestrator._resolve_merge_target("", self.TOP_K) is None
+        assert Layer1Orchestrator._resolve_merge_target("delivery_speed", []) is None
+
+
+class TestAutoMergeTarget:
+    """--no-hil: MERGE goes where the judge pointed, not to top-1."""
+
+    def _seed_two_ics(self, db):
+        repo = InitialCodeRepo(db)
+        repo.insert(InitialCode(id="ic_a", name="delivery_speed",
+                                definition="Complaints about delivery speed",
+                                status=ICStatus.ACTIVE))
+        repo.insert(InitialCode(id="ic_b", name="delivery_delay",
+                                definition="Complaints about delivery delays",
+                                status=ICStatus.ACTIVE))
+
+    def _candidate(self, test_segment):
+        q = "dostawa trwała zbyt długo"
+        s = test_segment.canonical_text.index(q)
+        return ICCandidate(ic_name="slow_delivery", definition="Delivery took too long",
+                           quote_text=q, span_start=s, span_end=s + len(q), confidence=0.8)
+
+    def _judge(self, orch, target_name, path="llm", failed=False):
+        top_k = [
+            SimilarityResult(ic_id="ic_a", ic_name="delivery_speed", similarity=0.9),
+            SimilarityResult(ic_id="ic_b", ic_name="delivery_delay", similarity=0.8),
+        ]
+        rec = ComparatorRecommendation.NEW if failed else ComparatorRecommendation.MERGE
+        orch.comparator.evaluate.return_value = (
+            ComparatorOutput(recommendation=rec, merge_target_name=target_name,
+                             reasoning="judge"),
+            top_k,
+            {"decision_path": path, "max_sim": 0.9,
+             "llm_recommendation": rec.value, "judge_failed": failed,
+             "judge_error": "boom" if failed else None},
+        )
+
+    def test_merge_goes_to_judge_named_target(self, mock_orchestrator, db, test_segment):
+        self._seed_two_ics(db)
+        mock_orchestrator.coder_agent.process_batch.return_value = {
+            test_segment.id: [self._candidate(test_segment)]}
+        self._judge(mock_orchestrator, "delivery_delay")
+        mock_orchestrator.reasoning_logger = MagicMock()
+
+        result = mock_orchestrator.run([test_segment], enable_hil=False)
+
+        vq = VerbatimQuoteRepo(db)
+        assert len(vq.get_all_for_ic("ic_b")) == 1
+        assert len(vq.get_all_for_ic("ic_a")) == 0
+        assert result["merged"] == 1
+        assert result["judge_merge_verdicts"] == 1
+        assert result["merge_target_unresolved"] == 0
+        rec = mock_orchestrator.reasoning_logger.log_candidate.call_args.args[0]
+        assert rec["merge_target_name"] == "delivery_delay"
+        assert rec["merge_target_resolved"] == "delivery_delay"
+        assert rec["judge_failed"] is False
+
+    def test_unresolved_target_falls_back_to_new(self, mock_orchestrator, db, test_segment):
+        self._seed_two_ics(db)
+        mock_orchestrator.coder_agent.process_batch.return_value = {
+            test_segment.id: [self._candidate(test_segment)]}
+        self._judge(mock_orchestrator, "price_complaint")
+        mock_orchestrator.reasoning_logger = MagicMock()
+
+        result = mock_orchestrator.run([test_segment], enable_hil=False)
+
+        assert result["merged"] == 0
+        assert result["new_ics_created"] == 1
+        assert result["merge_target_unresolved"] == 1
+        assert result["judge_merge_verdicts"] == 1
+        assert result["decision_paths"]["llm"] == 1
+        rec = mock_orchestrator.reasoning_logger.log_candidate.call_args.args[0]
+        assert rec["merge_target_name"] == "price_complaint"
+        assert rec["merge_target_resolved"] is None
+        assert rec["final_action"] == "new"
+
+    def test_judge_failure_counted_as_llm_failed(self, mock_orchestrator, db, test_segment):
+        self._seed_two_ics(db)
+        mock_orchestrator.coder_agent.process_batch.return_value = {
+            test_segment.id: [self._candidate(test_segment)]}
+        self._judge(mock_orchestrator, None, path="llm_failed", failed=True)
+        mock_orchestrator.reasoning_logger = MagicMock()
+
+        result = mock_orchestrator.run([test_segment], enable_hil=False)
+
+        assert result["decision_paths"]["llm_failed"] == 1
+        assert result["decision_paths"]["llm"] == 0
+        assert result["new_ics_created"] == 1
+        assert result["judge_merge_verdicts"] == 0
+        rec = mock_orchestrator.reasoning_logger.log_candidate.call_args.args[0]
+        assert rec["judge_failed"] is True
+        assert rec["decision_path"] == "llm_failed"
