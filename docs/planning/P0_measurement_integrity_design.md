@@ -121,7 +121,8 @@ def locate_quote(
   `{"type": "grounding_drop", "pass": 1, "segment_id", "ic_name", "quote_text"
   (pełny), "drop_class", "grounded": false, "final_action": "grounding_drop"}`.
   Istniejący rekord `pass2_grounding_drop` dostaje pole `drop_class`.
-- Rekordy `candidate` (pass-1 i pass-2) dostają pola `n_occurrences` i `resolution`.
+- Rekordy `candidate` (pass-1 i pass-2) dostają pola `n_occurrences` i
+  `occurrence_resolution`.
   Pełni to rolę per-cytatowego „poziomu dopasowania” z rekomendacji, dostosowanego
   do D1. `ICCandidate` dostaje dwa opcjonalne pola (`n_occurrences: int = 1`,
   `occurrence_resolution: Optional[str] = None`), z których korzysta rekord.
