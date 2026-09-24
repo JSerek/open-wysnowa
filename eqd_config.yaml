@@ -24,6 +24,12 @@ providers:
     instructor_mode: json  # Safest cross-model mode: embeds JSON in system prompt
                            # rather than relying on tool-call support (varies by model)
 
+  ollama:
+    type: openai_compatible
+    api_key_env: OLLAMA_API_KEY
+    base_url: http://localhost:11434/v1
+    instructor_mode: json  # local models: embed JSON schema in prompt (like openrouter)
+
 # ── NAMED MODELS ──────────────────────────────────────────────────
 models:
   embed_openai:
@@ -49,6 +55,30 @@ models:
     model_id: google/gemini-3-flash-preview
     reasoning: true               # Gemini Flash has baked-in thinking; controlled via OpenRouter
     reasoning_style: openai       # OpenRouter normalises to openai-style extra_body params
+
+  # Ollama (local, sequential — see docs/testing/local_models_leaderboard_feasibility.md)
+  # reasoning: false keeps the agent's reasoning_effort translation out of the request.
+  # extra_body {reasoning_effort: none} disables Ollama thinking (default is ON for
+  # qwen/gemma — thinking ate the token budget and broke IC refinement in the qwen smoke).
+  ollama_qwen:
+    provider: ollama
+    model_id: qwen3.6:35b-a3b
+    reasoning: false
+    extra_body: {reasoning_effort: none}
+  ollama_qwen38:
+    provider: ollama
+    model_id: qwen3.8:27b
+    reasoning: false
+    extra_body: {reasoning_effort: none}
+  ollama_gemma:
+    provider: ollama
+    model_id: gemma4:26b-a4b-it-q8_0
+    reasoning: false
+    extra_body: {reasoning_effort: none}
+  ollama_gptoss:                  # phase 2 (third model)
+    provider: ollama
+    model_id: gpt-oss:20b
+    reasoning: false
 
 # ── AGENTS ────────────────────────────────────────────────────────
 # v2 uses only the extraction agents + embeddings.
