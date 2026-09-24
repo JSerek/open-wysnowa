@@ -443,3 +443,53 @@ class TestAutoMergeTarget:
         rec = mock_orchestrator.reasoning_logger.log_candidate.call_args.args[0]
         assert rec["judge_failed"] is True
         assert rec["decision_path"] == "llm_failed"
+
+
+class TestHardQuoteVerification:
+    """A quote whose span does not match canonical text must never be persisted."""
+
+    def _bad_candidate(self):
+        # quote_text is real, but the span points at the wrong place
+        return ICCandidate(ic_name="bad_span", definition="Span does not match text",
+                           quote_text="dostawa trwała zbyt długo",
+                           span_start=0, span_end=25, confidence=0.8)
+
+    def _comp(self):
+        return ComparatorOutput(recommendation=ComparatorRecommendation.NEW,
+                                reasoning="test decision")
+
+    def test_apply_new_raises_and_persists_nothing(self, mock_orchestrator, db):
+        with pytest.raises(RuntimeError, match="Span verification failed"):
+            mock_orchestrator._apply_new(self._bad_candidate(), "seg_test",
+                                         self._comp(), None)
+        assert InitialCodeRepo(db).get_all_active() == []
+        assert VerbatimQuoteRepo(db).get_all_for_segment("seg_test") == []
+        mock_orchestrator.embedding_service.embed_ic.assert_not_called()
+
+    def test_apply_new_missing_segment_raises(self, mock_orchestrator, db, test_segment):
+        q = "dostawa trwała zbyt długo"
+        s = test_segment.canonical_text.index(q)
+        cand = ICCandidate(ic_name="orphan", definition="Segment does not exist",
+                           quote_text=q, span_start=s, span_end=s + len(q), confidence=0.8)
+        with pytest.raises(RuntimeError, match="not found"):
+            mock_orchestrator._apply_new(cand, "seg_missing", self._comp(), None)
+        assert InitialCodeRepo(db).get_all_active() == []
+
+    def test_apply_merge_raises_and_persists_nothing(self, mock_orchestrator, db):
+        InitialCodeRepo(db).insert(InitialCode(
+            id="ic_t", name="delivery", definition="Delivery complaints",
+            status=ICStatus.ACTIVE))
+        with pytest.raises(RuntimeError, match="Span verification failed"):
+            mock_orchestrator._apply_merge(self._bad_candidate(), "seg_test", "ic_t",
+                                           self._comp(), None)
+        assert VerbatimQuoteRepo(db).get_all_for_ic("ic_t") == []
+
+    def test_valid_quote_is_verified_on_insert(self, mock_orchestrator, db, test_segment):
+        q = "dostawa trwała zbyt długo"
+        s = test_segment.canonical_text.index(q)
+        cand = ICCandidate(ic_name="slow_delivery", definition="Delivery took too long",
+                           quote_text=q, span_start=s, span_end=s + len(q), confidence=0.8)
+        ic, quote = mock_orchestrator._apply_new(cand, "seg_test", self._comp(), None,
+                                                 defer_quote_embed=True)
+        assert quote.is_verified is True
+        assert VerbatimQuoteRepo(db).get_all_for_ic(ic.id)[0].span_start == s

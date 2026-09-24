@@ -982,6 +982,47 @@ class Layer1Orchestrator:
             self._apply_reject(candidate, comp_output, notes)
             return "reject", None, None
 
+    def _build_verified_quote(
+        self,
+        candidate: ICCandidate,
+        segment_id: str,
+        ic_id: str,
+    ) -> VerbatimQuote:
+        """Build the VerbatimQuote for a decision and hard-verify its span.
+
+        Runs BEFORE any insert. After the grounding gate a mismatch is impossible
+        without an upstream bug, so it fails loudly instead of persisting a
+        silently unverified quote (P0-3).
+        """
+        quote = VerbatimQuote(
+            ic_id=ic_id,
+            segment_id=segment_id,
+            quote_text=candidate.quote_text,
+            span_start=candidate.span_start,
+            span_end=candidate.span_end,
+            sentiment=candidate.sentiment.value if candidate.sentiment else None,
+        )
+        segment = self.segment_repo.get_by_id(segment_id)
+        if segment is None:
+            raise RuntimeError(
+                f"Segment {segment_id} not found while persisting quote for IC "
+                f"'{candidate.ic_name}' — span cannot be verified."
+            )
+        if not quote.verify(segment.canonical_text):
+            raise RuntimeError(
+                f"Span verification failed for IC '{candidate.ic_name}' in segment "
+                f"{segment_id}: canonical[{quote.span_start}:{quote.span_end}] != "
+                f"quote_text. This indicates a grounding bug upstream."
+            )
+        return quote
+
+    def _insert_quote(self, quote: VerbatimQuote, defer_embed: bool) -> VerbatimQuote:
+        """Insert a verified quote, embedding it now unless the caller batches later."""
+        if not defer_embed:
+            quote = self.embedding_service.embed_quote(quote)
+        self.quote_repo.insert(quote)
+        return quote
+
     def _apply_new(
         self,
         candidate: ICCandidate,
@@ -1006,34 +1047,15 @@ class Layer1Orchestrator:
             confidence=candidate.confidence,
         )
 
+        # Verify the quote BEFORE any insert — a failure leaves no orphan IC.
+        quote = self._build_verified_quote(candidate, segment_id, ic.id)
+
         # Embed IC (embed-on-write) — always immediate
         ic = self.embedding_service.embed_ic(ic)
 
-        # Persist IC
+        # Persist IC, then its quote
         self.ic_repo.insert(ic)
-
-        # Create verbatim quote (propagate sentiment from candidate)
-        quote = VerbatimQuote(
-            ic_id=ic.id,
-            segment_id=segment_id,
-            quote_text=candidate.quote_text,
-            span_start=candidate.span_start,
-            span_end=candidate.span_end,
-            sentiment=candidate.sentiment.value if hasattr(candidate, 'sentiment') and candidate.sentiment else None,
-        )
-
-        # Verify quote against canonical text
-        segment = self.segment_repo.get_by_id(segment_id)
-        if segment:
-            quote.verify(segment.canonical_text)
-
-        if defer_quote_embed:
-            # Insert without embedding — caller will batch-embed later
-            self.quote_repo.insert(quote)
-        else:
-            # Embed quote immediately (original behavior)
-            quote = self.embedding_service.embed_quote(quote)
-            self.quote_repo.insert(quote)
+        quote = self._insert_quote(quote, defer_quote_embed)
 
         # Log decision
         self.decision_repo.insert(DecisionLog(
@@ -1069,25 +1091,8 @@ class Layer1Orchestrator:
             self._apply_reject(candidate, comp_output, notes)
             return None
 
-        # Create verbatim quote for the existing IC (propagate sentiment)
-        quote = VerbatimQuote(
-            ic_id=target_ic.id,
-            segment_id=segment_id,
-            quote_text=candidate.quote_text,
-            span_start=candidate.span_start,
-            span_end=candidate.span_end,
-            sentiment=candidate.sentiment.value if hasattr(candidate, 'sentiment') and candidate.sentiment else None,
-        )
-
-        segment = self.segment_repo.get_by_id(segment_id)
-        if segment:
-            quote.verify(segment.canonical_text)
-
-        if defer_quote_embed:
-            self.quote_repo.insert(quote)
-        else:
-            quote = self.embedding_service.embed_quote(quote)
-            self.quote_repo.insert(quote)
+        quote = self._build_verified_quote(candidate, segment_id, target_ic.id)
+        quote = self._insert_quote(quote, defer_quote_embed)
 
         # Log decision
         self.decision_repo.insert(DecisionLog(
