@@ -51,9 +51,10 @@ class TestCodebookComparatorEmptyCodebook:
         embedding_service.find_similar_ics.return_value = []  # Empty codebook
 
         comparator = CodebookComparator(mc, embedding_service, db, config)
-        output, top_k, _meta = comparator.evaluate(test_candidate)
+        output, top_k, meta = comparator.evaluate(test_candidate)
 
         assert output.recommendation == ComparatorRecommendation.NEW
+        assert meta["judge_failed"] is False
         assert "empty" in output.reasoning.lower() or "first" in output.reasoning.lower()
         assert top_k == []
         # LLM should NOT be called
@@ -156,5 +157,55 @@ class TestCodebookComparatorSingleTrack:
         output, _, meta = comparator.evaluate(test_candidate)
 
         assert output.recommendation == ComparatorRecommendation.NEW
-        assert meta["decision_path"] == "llm"
+        assert meta["decision_path"] == "llm_failed"
+        assert meta["judge_failed"] is True
+        assert "API timeout" in meta["judge_error"]
         assert "failed" in output.reasoning.lower()
+
+    def test_llm_failure_adds_no_auc_pair(self, mock_services, db, test_candidate, sample_ics):
+        """Eval mode: a failed judge call is not a verdict → no (cosine, verdict) pair."""
+        mc, mock_client, embedding_service = mock_services
+        from src.core.db import InitialCodeRepo
+        for ic in sample_ics:
+            InitialCodeRepo(db).insert(ic)
+        embedding_service.find_similar_ics.return_value = [
+            SimilarityResult(ic_id="ic_001", ic_name="Delivery speed complaint", similarity=0.60),
+        ]
+        mock_client.chat.completions.create_with_completion.side_effect = Exception("boom")
+
+        comparator = CodebookComparator(
+            mc, embedding_service, db, self._make_config(), eval_mode=True,
+        )
+        output, _, meta = comparator.evaluate(test_candidate)
+
+        assert output.recommendation == ComparatorRecommendation.NEW
+        assert comparator.eval_pairs == []
+
+    def test_successful_judge_meta_flags(self, mock_services, db, test_candidate, sample_ics):
+        mc, mock_client, embedding_service = mock_services
+        _, _, meta = self._seed_and_eval(
+            mc, mock_client, embedding_service, db, test_candidate, sample_ics,
+            similarity=0.5, verdict=ComparatorRecommendation.NEW,
+        )
+        assert meta["judge_failed"] is False
+        assert meta["judge_error"] is None
+
+    def test_successful_judge_records_auc_pair(self, mock_services, db, test_candidate, sample_ics):
+        mc, mock_client, embedding_service = mock_services
+        from src.core.db import InitialCodeRepo
+        for ic in sample_ics:
+            InitialCodeRepo(db).insert(ic)
+        embedding_service.find_similar_ics.return_value = [
+            SimilarityResult(ic_id="ic_001", ic_name="Delivery speed complaint", similarity=0.7),
+        ]
+        mock_client.chat.completions.create_with_completion.return_value = (
+            ComparatorOutput(recommendation=ComparatorRecommendation.MERGE,
+                             merge_target_name="Delivery speed complaint",
+                             reasoning="Same phenomenon."),
+            MagicMock(),
+        )
+        comparator = CodebookComparator(
+            mc, embedding_service, db, self._make_config(), eval_mode=True,
+        )
+        comparator.evaluate(test_candidate)
+        assert comparator.eval_pairs == [(pytest.approx(0.7), "MERGE")]

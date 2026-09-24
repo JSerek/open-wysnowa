@@ -87,7 +87,9 @@ class CodebookComparator:
 
         Returns: (ComparatorOutput, top_k_similar_results, meta)
             meta: {
-                "decision_path": "empty_codebook" | "llm",
+                "decision_path": "empty_codebook" | "llm" | "llm_failed",
+                "judge_failed": bool,           # judge raised → fallback NEW, no AUC pair
+                "judge_error": str | None,
                 "max_sim": float | None,        # top-1 cosine, for Phase-3 AUC
                 "llm_recommendation": str | None,
             }
@@ -115,7 +117,10 @@ class CodebookComparator:
                 recommendation=ComparatorRecommendation.NEW,
                 reasoning="Codebook is empty; this is the first code.",
             )
-            meta = {"decision_path": "empty_codebook", "max_sim": None, "llm_recommendation": None}
+            meta = {
+                "decision_path": "empty_codebook", "max_sim": None,
+                "llm_recommendation": None, "judge_failed": False, "judge_error": None,
+            }
             return output, top_k_results, meta
 
         # 4. Always call the LLM judge for a non-empty codebook
@@ -133,27 +138,37 @@ class CodebookComparator:
                     (result.ic_id, result.ic_name, ic.definition, result.similarity)
                 )
 
+        judge_error: Optional[str] = None
         try:
             output = self._get_llm_recommendation(
                 candidate=candidate,
                 top_k_with_defs=top_k_with_defs,
             )
         except Exception as e:
+            judge_error = str(e)
             logger.error(f"[ERROR] Comparator LLM failed for '{candidate.ic_name}': {e}")
             output = ComparatorOutput(
                 recommendation=ComparatorRecommendation.NEW,
                 reasoning=f"LLM comparison failed ({e}); defaulting to NEW for human review.",
             )
+        judge_failed = judge_error is not None
 
-        # Eval mode: record (top-1 cosine, verdict) for AUC — merge/new only.
-        if self.eval_mode and output.recommendation in (
-            ComparatorRecommendation.MERGE,
-            ComparatorRecommendation.NEW,
+        # Eval mode: record (top-1 cosine, verdict) for AUC — merge/new only, and
+        # never from a failed judge call (a fallback NEW is not a verdict).
+        if (
+            self.eval_mode
+            and not judge_failed
+            and output.recommendation in (
+                ComparatorRecommendation.MERGE,
+                ComparatorRecommendation.NEW,
+            )
         ):
             self.eval_pairs.append((max_sim, output.recommendation.value))
 
         meta = {
-            "decision_path": "llm",
+            "decision_path": "llm_failed" if judge_failed else "llm",
+            "judge_failed": judge_failed,
+            "judge_error": judge_error,
             "max_sim": max_sim,
             "llm_recommendation": output.recommendation.value,
         }
