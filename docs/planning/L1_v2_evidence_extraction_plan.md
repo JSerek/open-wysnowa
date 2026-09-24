@@ -17,6 +17,12 @@
 >   `report.py` (macierz Markdown/CSV z kierunkami i wariancją k>1). 221 testów
 >   green. Live smoke `canonical_top10` do odpalenia przez użytkownika
 >   (płatne wywołania API).
+> - ✅ **P0 — integralność pomiaru** (2026-09-24, `3f7ba8d`, `PIPELINE_VERSION =
+>   "v2-p0"`): zmienia kontrakt #4 w szczegółach wykonania (span przez
+>   `locate_quote`, klasy odrzutów, pierwsze wolne wystąpienie), sędzia z jawnym
+>   `llm_failed`, `--no-hil` respektuje `merge_target_name`. Szczegóły:
+>   `P0_measurement_integrity_design.md`. Opisy `_ground_candidate` / `find()`
+>   niżej to stan z faz 1–3.
 
 ## Context — po co to robimy
 
@@ -66,6 +72,10 @@ Wszystkie poniższe są zatwierdzone przez użytkownika w dyskusji projektowej:
      bez pól spanów). **Tier 2/3 span auto-korekta — USUNIĘTA.**
    - **Offset liczy kod** deterministycznie: `span = canonical.find(quote_text)`
      (`CoderAgent._ground_candidate` → `ICCandidate` z policzonym spanem).
+     *Od v2-p0:* `src.preprocessing.locate_quote` (pierwsze wystąpienie
+     niezajęte przez wcześniejsze spany; odrzut dostaje klasę diagnostyczną
+     `normalized_ws` / `case` / `ellipsis_stitch` / `unmatched`, nigdy nie jest
+     akceptowany) — wywoływane przez `coder_agent.ground_candidate`.
    - **Bramka groundingu (twarda, bez naprawy):** czy IDENTYCZNY tekst występuje
      w danych. Jeśli `find == -1` (model zhalucynował znaki/słowa/zdania) →
      kandydat odrzucony i odrzut liczy się na niekorzyść modelu

@@ -80,7 +80,9 @@ YAML but are unused in v2.)
 Phase 1 removed the threshold-based triage. Every candidate now goes through one
 track: embedding `find_similar_ics(top_k)` (ranking only, no cutoff) → LLM judge
 returns NEW / MERGE / REJECT. The only shortcut is an empty codebook → NEW without
-an LLM call. `auto_new_threshold` / `auto_merge_threshold` /
+an LLM call. In `--no-hil` a MERGE goes to the judge's `merge_target_name`
+(resolved against the shortlist; unresolved → NEW, counted); a judge call that
+raises falls back to NEW with `decision_path="llm_failed"` and yields no AUC pair. `auto_new_threshold` / `auto_merge_threshold` /
 `merge_conflict_similarity_threshold` and the meta-IC filter are gone (see
 `docs/planning/L1_v2_evidence_extraction_plan.md` Phase 1.4 + Appendix C).
 
@@ -97,9 +99,10 @@ Reference-free signals, never gates:
 - **judge_failure_rate**, **merge_target_unresolved_rate** — judge reliability; failed judge calls produce no AUC pair
 - **ambiguous_occurrence_rate** — accepted quotes whose phrase repeats in the review (span = first free occurrence)
 - **extraction_density** — per-segment char coverage via merged span-union
-- **candidate_drop_rate** — candidates rejected by 3-tier span validation
+- **candidate_drop_rate** — candidates rejected by the exact-match grounding gate (`locate_quote`; numerically = quote_hallucination_rate)
 - **ic_concentration** — singleton ratio
-- **merge_rate**, **triage_efficiency**, **comparator_agreement**
+- **merge_rate**
+- **embedding_separation_auc** — threshold-free AUC over (top-1 cosine, sim-blind judge verdict) pairs (eval mode)
 - **coder_confidence**, **quote_coverage_per_ic**, **ITS** (passed in)
 - **cross_review_convergence** — judgment-call L1/L2 metric (kept; revisit scope)
 

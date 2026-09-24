@@ -4,6 +4,11 @@
 > Dokument opisuje **rzeczywisty przepływ kodu** v2 L1: jednoprzejściowa ekstrakcja
 > evidence z surowym pomiarem, jeden tor decyzyjny i pełna śledzalność.
 > Plan/kontrakt: `docs/planning/L1_v2_evidence_extraction_plan.md`.
+>
+> **Migawka historyczna.** Od P0 (2026-09-24, `v2-p0`) grounding działa przez
+> `src.preprocessing.locate_quote` (zamiast `_ground_candidate` + `find()`),
+> odrzuty mają klasy, a metryka `grounding_rate` nazywa się `span_integrity`.
+> Aktualny opis: `docs/planning/P0_measurement_integrity_design.md`.
 
 ## Zasada nadrzędna Fazy 1
 
