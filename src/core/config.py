@@ -31,6 +31,9 @@ class NamedModel(BaseModel):
     # Reasoning model support — omit for non-reasoning models (treated as False)
     reasoning: bool = False
     reasoning_style: Optional[str] = None  # "openai" | "gemini" | "deepseek" | "anthropic"
+    # Static extra_body sent on every call, overriding the reasoning-effort
+    # translation (e.g. Ollama: {"reasoning_effort": "none"} disables thinking).
+    extra_body: Optional[Dict[str, Any]] = None
 
 
 class AgentParams(BaseModel):
@@ -287,7 +290,10 @@ class ModelClient:
         """
         Return provider-specific extra_body params for reasoning effort control.
 
-        Returns an empty dict if:
+        A model-level static ``extra_body`` (NamedModel.extra_body) wins over
+        everything below and is returned as-is.
+
+        Otherwise returns an empty dict if:
           - the agent's model has no reasoning (reasoning: false / omitted)
           - no reasoning_effort is configured for the agent
           - the reasoning_style is not recognised
@@ -303,10 +309,15 @@ class ModelClient:
         New reasoning_style values can be added to _EFFORT_TRANSLATORS below.
         """
         agent_cfg = self.config.agents.get(agent_name)
-        if not agent_cfg or not agent_cfg.reasoning_effort:
+        if not agent_cfg:
             return {}
 
         model_cfg = self.config.models.get(agent_cfg.model)
+        if model_cfg and model_cfg.extra_body:
+            return dict(model_cfg.extra_body)
+
+        if not agent_cfg.reasoning_effort:
+            return {}
         if not model_cfg or not model_cfg.reasoning:
             return {}
 

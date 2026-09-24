@@ -118,3 +118,40 @@ class TestModelClient:
         mc = ModelClient(config)
         client, model_id = mc.get_embedding_client()
         assert model_id == "text-embedding-3-small"
+
+
+class TestBuildExtraBody:
+    """Model-level extra_body is sent verbatim, independent of reasoning flags."""
+
+    @pytest.fixture
+    def mc(self):
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test-key",
+            "OPENROUTER_API_KEY": "test-key",
+            "OLLAMA_API_KEY": "test-key",
+        }):
+            return ModelClient(load_config(CONFIG_PATH))
+
+    def test_static_extra_body_on_non_reasoning_model(self, mc):
+        mc.config.models["local_test"] = NamedModel(
+            provider="openai", model_id="local", reasoning=False,
+            extra_body={"reasoning_effort": "none"},
+        )
+        mc.config.agents["coder_agent"].model = "local_test"
+        assert mc.build_extra_body("coder_agent") == {"reasoning_effort": "none"}
+
+    def test_static_extra_body_overrides_effort_translation(self, mc):
+        mc.config.models["local_test"] = NamedModel(
+            provider="openai", model_id="local", reasoning=True,
+            reasoning_style="openai", extra_body={"reasoning_effort": "none"},
+        )
+        mc.config.agents["coder_agent"].model = "local_test"
+        mc.config.agents["coder_agent"].reasoning_effort = "low"
+        assert mc.build_extra_body("coder_agent") == {"reasoning_effort": "none"}
+
+    def test_no_extra_body_unchanged(self, mc):
+        mc.config.models["local_test"] = NamedModel(
+            provider="openai", model_id="local", reasoning=False,
+        )
+        mc.config.agents["coder_agent"].model = "local_test"
+        assert mc.build_extra_body("coder_agent") == {}
