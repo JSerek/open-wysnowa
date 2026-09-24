@@ -159,10 +159,19 @@ def _print_summary(results, db_path):
         print(f"\n  Database saved to: {db_path}")
         return
 
-    grounding = l3.get("grounding", {})
-    if grounding:
-        print(f"  Grounding:    {grounding.get('grounding_rate', 0):.1%} "
-              f"({grounding.get('verified', 0)}/{grounding.get('total_quotes', 0)} quotes)")
+    integrity = l3.get("span_integrity", {})
+    if integrity:
+        flag = "" if integrity.get("span_integrity", 1.0) == 1.0 else "⚠ BUG "
+        print(f"  {flag}Span integrity: {integrity.get('span_integrity', 0):.1%} "
+              f"({integrity.get('verified', 0)}/{integrity.get('total_quotes', 0)} quotes)")
+
+    judge = l3.get("judge_reliability", {})
+    if judge:
+        flag = "⚠ " if judge.get("judge_failed", 0) else ""
+        print(f"  {flag}Judge failures: {judge.get('judge_failure_rate', 0):.1%} "
+              f"({judge.get('judge_failed', 0)}/{judge.get('judge_calls', 0)} calls); "
+              f"merge target unresolved: {judge.get('merge_target_unresolved', 0)}"
+              f"/{judge.get('judge_merge_verdicts', 0)}")
 
     ext = l3.get("extraction_density", {})
     if ext:
@@ -192,6 +201,10 @@ def _print_summary(results, db_path):
         flag = "⚠ " if rate > 0.10 else ""
         print(f"  {flag}Quote hallucination rate: {rate:.1%} "
               f"({hall.get('hallucinated', 0)}/{hall.get('total_raw_candidates', 0)})")
+        classes = hall.get("drop_classes", {})
+        if classes:
+            print(f"    drop classes: {classes}  "
+                  f"(unmatched rate {hall.get('unmatched_quote_rate', 0):.1%})")
 
     merge = l3.get("merge_rate", {})
     if merge and merge.get("total_candidates", 0) > 0:

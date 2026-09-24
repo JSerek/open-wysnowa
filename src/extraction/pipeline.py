@@ -45,7 +45,12 @@ logger = logging.getLogger(__name__)
 # Metric direction map (Appendix A): "more" = higher is better, "less" = lower is
 # better, "" = descriptive (no inherent direction).
 _METRIC_DIRECTIONS: Dict[str, str] = {
-    "grounding_rate": "more",
+    "span_integrity": "more",
+    # P0 — judge reliability + quote diagnostics
+    "judge_failure_rate": "less",
+    "merge_target_unresolved_rate": "less",
+    "unmatched_quote_rate": "less",
+    "ambiguous_occurrence_rate": "less",
     "extraction_density_mean": "",
     "candidate_drop_rate": "less",
     "quote_hallucination_rate": "less",
@@ -211,6 +216,13 @@ class EQDPipeline:
             pass2_stats=layer1_summary.get("pass2_stats", {}),
             # Phase 3 — (cosine, sim-blind verdict) pairs for the AUC metric
             auc_pairs=layer1_summary.get("auc_pairs", []),
+            # P0 — judge reliability + grounding diagnostics
+            decision_paths=layer1_summary.get("decision_paths", {}),
+            merge_target_unresolved=layer1_summary.get("merge_target_unresolved", 0),
+            judge_merge_verdicts=layer1_summary.get("judge_merge_verdicts", 0),
+            grounding_drop_classes=layer1_summary.get("grounding_drop_classes", {}),
+            ambiguous_occurrences=layer1_summary.get("ambiguous_occurrences", {}),
+            accepted_quotes_total=layer1_summary.get("accepted_quotes_total", 0),
         )
 
         # Cumulative saturation curve from Layer 1
@@ -317,7 +329,12 @@ class EQDPipeline:
             return node if isinstance(node, (int, float)) else None
 
         metrics: Dict[str, float] = {
-            "grounding_rate": _get(["grounding", "grounding_rate"]),
+            "span_integrity": _get(["span_integrity", "span_integrity"]),
+            # P0 — judge reliability + quote diagnostics
+            "judge_failure_rate": _get(["judge_reliability", "judge_failure_rate"]),
+            "merge_target_unresolved_rate": _get(["judge_reliability", "merge_target_unresolved_rate"]),
+            "unmatched_quote_rate": _get(["quote_hallucination_rate", "unmatched_quote_rate"]),
+            "ambiguous_occurrence_rate": _get(["ambiguous_occurrences", "ambiguous_occurrence_rate"]),
             "extraction_density_mean": _get(["extraction_density", "distribution", "mean"]),
             "candidate_drop_rate": _get(["extraction_density", "drop_rate", "overall_rate"]),
             "quote_hallucination_rate": _get(["quote_hallucination_rate", "quote_hallucination_rate"]),

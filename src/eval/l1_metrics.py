@@ -6,7 +6,12 @@ Layer-3 QualityMetricsEngine; the theme/category (L2+) metrics were shelved with
 the full pipeline (see the `v1-full-pipeline` tag).
 
 DATA INTEGRITY:
-  - Grounding — are all verbatim quotes verifiable against canonical text?
+  - Span Integrity — sanity check: every persisted quote still verifies against
+    canonical text (1.0 expected; < 1.0 = bug, not a model property)
+  - Quote Hallucination Rate — plus drop-class breakdown (normalized_ws / case /
+    ellipsis_stitch / unmatched) and unmatched_quote_rate
+  - Ambiguous Occurrence Rate — accepted quotes whose phrase repeats in the review
+  - Judge Reliability — judge_failure_rate + merge_target_unresolved_rate
   - Extraction Density — character-level segment coverage by IC quotes
     (+ Candidate Drop Rate — candidates rejected by the grounding gate)
   - Quote Hallucination Rate — fraction of candidates whose quote was not a
@@ -94,13 +99,18 @@ class L1MetricsEngine:
                 - dropped_per_segment: Dict[str, int] — {segment_id: n_dropped}
                 - new_ic_confidences: List[float] — novelty confidence of new ICs
                 - coder_flagged_match / coder_new_comp_* : int — coder↔comparator matrix
+                - decision_paths: Dict[str, int] — judge path counts (llm / llm_failed …)
+                - merge_target_unresolved / judge_merge_verdicts: int — auto-MERGE audit
+                - grounding_drop_classes: Dict[str, int] — pass-1 drop classes
+                - ambiguous_occurrences: Dict[str, int] — first_free / first_fallback
+                - accepted_quotes_total: int — quotes passing the gate (pass 1 + 2)
 
         Returns dict with all computed results.
         """
         results: Dict[str, Any] = {}
 
         # ── DATA INTEGRITY ────────────────────────────────────────────────
-        results["grounding"] = self.compute_grounding()
+        results["span_integrity"] = self.compute_span_integrity()
 
         total_dropped = kwargs.get("total_dropped", 0)
         total_candidates = kwargs.get("total_candidates", 0)
@@ -113,6 +123,12 @@ class L1MetricsEngine:
         results["quote_hallucination_rate"] = self.compute_quote_hallucination_rate(
             total_dropped=total_dropped,
             total_valid_candidates=total_candidates,
+            drop_classes=kwargs.get("grounding_drop_classes", {}),
+            pass2_drop_classes=kwargs.get("pass2_stats", {}).get("drop_classes", {}),
+        )
+        results["ambiguous_occurrences"] = self.compute_ambiguous_occurrences(
+            kwargs.get("ambiguous_occurrences", {}),
+            kwargs.get("accepted_quotes_total", 0),
         )
 
         # ── CODEBOOK HEALTH ───────────────────────────────────────────────
@@ -129,6 +145,13 @@ class L1MetricsEngine:
         )
         results["omission_stats"] = self.compute_omission_stats(
             kwargs.get("pass2_stats", {})
+        )
+
+        # ── JUDGE RELIABILITY (P0) ────────────────────────────────────────
+        results["judge_reliability"] = self.compute_judge_reliability(
+            kwargs.get("decision_paths", {}),
+            kwargs.get("merge_target_unresolved", 0),
+            kwargs.get("judge_merge_verdicts", 0),
         )
 
         # ── EMBEDDING EVALUATION (Phase 3) ────────────────────────────────
@@ -218,16 +241,19 @@ class L1MetricsEngine:
         }
         return result
 
-    def compute_grounding(self) -> Dict[str, Any]:
+    def compute_span_integrity(self) -> Dict[str, Any]:
         """
-        Re-verify all verbatim quotes against their canonical texts.
+        Re-verify all persisted verbatim quotes against their canonical texts.
+
+        Sanity check — after the hard grounding gate this must be 1.0; anything
+        lower indicates a bug, not a property of the model.
 
         Returns:
             {
                 "total_quotes": int,
                 "verified": int,
                 "failed": int,
-                "grounding_rate": float,
+                "span_integrity": float,
                 "failures": [(quote_id, ic_id, reason), ...]
             }
         """
@@ -261,10 +287,16 @@ class L1MetricsEngine:
             "total_quotes": total,
             "verified": verified,
             "failed": len(failures),
-            "grounding_rate": rate,
+            "span_integrity": rate,
             "failures": failures,
         }
-        logger.info(f"Grounding: {verified}/{total} ({rate:.1%})")
+        if failures:
+            logger.error(
+                f"Span integrity {verified}/{total} ({rate:.1%}) — persisted quotes "
+                f"fail verification; this is a pipeline bug: {failures[:3]}"
+            )
+        else:
+            logger.info(f"Span integrity: {verified}/{total} ({rate:.1%})")
         return result
 
     def compute_extraction_density(
@@ -720,24 +752,31 @@ class L1MetricsEngine:
         self,
         total_dropped: int = 0,
         total_valid_candidates: int = 0,
+        drop_classes: Optional[Dict[str, int]] = None,
+        pass2_drop_classes: Optional[Dict[str, int]] = None,
     ) -> Dict[str, Any]:
         """
         Quote Hallucination Rate (v2 Phase 1): raw faithfulness of the evidence.
 
-        Formula: hallucinated / (grounded_candidates + hallucinated)
+        Formula: hallucinated / (grounded_candidates + hallucinated)   [pass 1]
 
         Spans are computed by the system (the model never emits offsets), so the
         only way a quote can fail is by not being a verbatim substring of the
-        canonical text — i.e. the model invented/altered characters, words, or
-        merged non-adjacent fragments. Every such candidate is dropped and counts
-        against the model.
+        canonical text. Nothing is repaired, so this rate is not circular.
 
-        Direction: less = better. In Phase 1 this coincides numerically with
-        candidate_drop_rate (the grounding gate is the only drop path); it is the
-        explicit, named faithfulness signal the leaderboard ranks on.
+        P0 breakdown: drop_classes says HOW the failed quotes missed
+        (normalized_ws / case / ellipsis_stitch = regeneration of real text;
+        unmatched = paraphrase or fabrication). unmatched_quote_rate isolates the
+        latter. pass2_drop_classes is reported alongside, outside the rate.
+
+        Direction: less = better.
         """
+        drop_classes = dict(drop_classes or {})
+        pass2_drop_classes = dict(pass2_drop_classes or {})
         total_raw = total_valid_candidates + total_dropped
         rate = total_dropped / total_raw if total_raw > 0 else 0.0
+        unmatched = drop_classes.get("unmatched", 0)
+        unmatched_rate = unmatched / total_raw if total_raw > 0 else 0.0
 
         if total_raw > 0:
             self.qm_repo.insert(QualityMetric(
@@ -746,12 +785,73 @@ class L1MetricsEngine:
             ))
 
         logger.info(
-            f"Quote hallucination rate: {rate:.1%} ({total_dropped}/{total_raw} candidates)"
+            f"Quote hallucination rate: {rate:.1%} ({total_dropped}/{total_raw} candidates); "
+            f"classes={drop_classes}"
         )
         return {
             "quote_hallucination_rate": round(rate, 4),
             "hallucinated": total_dropped,
             "total_raw_candidates": total_raw,
+            "drop_classes": drop_classes,
+            "pass2_drop_classes": pass2_drop_classes,
+            "unmatched_quote_rate": round(unmatched_rate, 4),
+        }
+
+    def compute_judge_reliability(
+        self,
+        decision_paths: Dict[str, int],
+        merge_target_unresolved: int = 0,
+        judge_merge_verdicts: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Judge reliability (P0). Never a gate — a run with failures is flagged, not
+        stopped.
+
+        judge_failure_rate = llm_failed / (llm + llm_failed): judge calls that raised
+          after retries and fell back to NEW. Those calls produce no AUC pair.
+        merge_target_unresolved_rate = unresolved / MERGE verdicts: --no-hil MERGEs
+          whose merge_target_name was not on the shortlist (fallback NEW).
+
+        Direction: less = better for both.
+        """
+        failed = int(decision_paths.get("llm_failed", 0))
+        calls = int(decision_paths.get("llm", 0)) + failed
+        failure_rate = failed / calls if calls > 0 else 0.0
+        unresolved_rate = (
+            merge_target_unresolved / judge_merge_verdicts
+            if judge_merge_verdicts > 0 else 0.0
+        )
+        if failed:
+            logger.warning(
+                f"Judge failures: {failed}/{calls} ({failure_rate:.1%}) — run is unreliable"
+            )
+        return {
+            "judge_failure_rate": round(failure_rate, 4),
+            "judge_failed": failed,
+            "judge_calls": calls,
+            "merge_target_unresolved": int(merge_target_unresolved),
+            "merge_target_unresolved_rate": round(unresolved_rate, 4),
+            "judge_merge_verdicts": int(judge_merge_verdicts),
+        }
+
+    def compute_ambiguous_occurrences(
+        self,
+        ambiguous_occurrences: Dict[str, int],
+        accepted_quotes_total: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Share of gate-passing quotes whose phrase occurs 2+ times in the review, so
+        the span had to be chosen (first_free / first_fallback). Direction: less.
+        """
+        first_free = int(ambiguous_occurrences.get("first_free", 0))
+        first_fallback = int(ambiguous_occurrences.get("first_fallback", 0))
+        n = first_free + first_fallback
+        rate = n / accepted_quotes_total if accepted_quotes_total > 0 else 0.0
+        return {
+            "ambiguous_occurrence_rate": round(rate, 4),
+            "first_free": first_free,
+            "first_fallback": first_fallback,
+            "accepted_quotes_total": int(accepted_quotes_total),
         }
 
     def compute_cross_review_convergence(self) -> Dict[str, Any]:

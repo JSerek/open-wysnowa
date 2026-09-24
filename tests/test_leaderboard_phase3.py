@@ -26,6 +26,7 @@ from src.extraction.prompts import (
     build_comparator_user_prompt,
     build_comparator_user_prompt_simblind,
 )
+from src.extraction.pipeline import EQDPipeline
 from src.leaderboard.harness import run_leaderboard
 from src.leaderboard.registry import RunManifest, RunRegistry
 from src.leaderboard.report import (
@@ -265,3 +266,26 @@ class TestReport:
         assert "model-A×embed-X" in csv_out
         assert "model-A×embed-X_sd" in csv_out
         assert "0.7" in csv_out
+
+
+class TestFlattenMetrics:
+    def test_p0_keys_and_rename(self):
+        quality = {
+            "span_integrity": {"span_integrity": 1.0},
+            "judge_reliability": {"judge_failure_rate": 0.1,
+                                  "merge_target_unresolved_rate": 0.2},
+            "quote_hallucination_rate": {"quote_hallucination_rate": 0.3,
+                                         "unmatched_quote_rate": 0.05},
+            "ambiguous_occurrences": {"ambiguous_occurrence_rate": 0.0},
+        }
+        metrics, directions = EQDPipeline._flatten_metrics(quality)
+        assert metrics["span_integrity"] == 1.0
+        assert metrics["judge_failure_rate"] == 0.1
+        assert metrics["merge_target_unresolved_rate"] == 0.2
+        assert metrics["unmatched_quote_rate"] == 0.05
+        assert metrics["ambiguous_occurrence_rate"] == 0.0
+        assert "grounding_rate" not in metrics
+        assert directions["span_integrity"] == "more"
+        for k in ("judge_failure_rate", "merge_target_unresolved_rate",
+                  "unmatched_quote_rate", "ambiguous_occurrence_rate"):
+            assert directions[k] == "less"
