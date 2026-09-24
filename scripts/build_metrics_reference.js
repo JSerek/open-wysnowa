@@ -1,6 +1,9 @@
-// Generator of docs/reference/EQD_AI_Metrics_Reference.docx (PL metrics reference).
+// Generator of the PL metrics reference, in two formats from one content source:
+//   docs/reference/EQD_AI_Metrics_Reference.docx
+//   docs/reference/EQD_AI_Metrics_Reference.md
 //
-// The document is generated, not hand-edited: when an L1 metric is added, removed
+// Content is written once as neutral blocks (H1/P/BUL/table/example/…) and
+// rendered by renderDocx() and renderMd(). The documents are generated, not hand-edited: when an L1 metric is added, removed
 // or redefined (src/eval/l1_metrics.py, _METRIC_DIRECTIONS in
 // src/extraction/pipeline.py), update the content below and regenerate.
 // "Run ref." values come from the leaderboard registry (load_matrix, v2-p0).
@@ -8,6 +11,7 @@
 // Requires the `docx` npm package (tested with 9.7.2); the repo has no package.json:
 //   npm install --prefix /tmp/docx-gen docx@9.7.2
 //   NODE_PATH=/tmp/docx-gen/node_modules node scripts/build_metrics_reference.js [out.docx]
+//   (the .md is written next to the .docx, same basename)
 const fs = require("fs");
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Header, Footer,
@@ -39,15 +43,23 @@ function runs(text, base = {}) {
   return out;
 }
 
-const P = (text, opts = {}) => new Paragraph({ children: runs(text), spacing: { after: 120 }, ...opts });
-const H1 = (t) => new Paragraph({ heading: HeadingLevel.HEADING_1, children: [TR(t)] });
-const H2 = (t) => new Paragraph({ heading: HeadingLevel.HEADING_2, children: [TR(t)] });
-const H3 = (t) => new Paragraph({ heading: HeadingLevel.HEADING_3, children: [TR(t)] });
-const LABEL = (t) => new Paragraph({
-  children: [TR({ text: t, bold: true, color: BLUE })], spacing: { before: 160, after: 60 },
-});
-const BUL = (t) => new Paragraph({ numbering: { reference: "bullets", level: 0 }, children: runs(t), spacing: { after: 60 } });
-const BREAK = () => new Paragraph({ children: [new PageBreak()] });
+// ── Neutral content blocks (rendered to .docx and .md below) ────────────────
+// `opts` on P carries docx-only paragraph options (spacing); Markdown ignores it.
+const P = (t, opts = {}) => ({ k: "p", t, opts });
+const H1 = (t) => ({ k: "h1", t });
+const H2 = (t) => ({ k: "h2", t });
+const H3 = (t) => ({ k: "h3", t });
+const LABEL = (t) => ({ k: "label", t });
+const BUL = (t) => ({ k: "bul", t });
+const BREAK = () => ({ k: "break" });
+const SPACER = () => ({ k: "spacer" });
+const table = (headers, rows, widths) => ({ k: "table", headers, rows, widths });
+const example = (lines) => ({ k: "ex", lines });
+const quickTable = () => ({ k: "quick" });
+const TOC = () => ({ k: "toc" });
+
+// ── docx rendering ──────────────────────────────────────────────────────────
+const dxP = (text, opts = {}) => new Paragraph({ children: runs(text), spacing: { after: 120 }, ...opts });
 
 function cell(text, width, { header = false, fill = null, bold = false } = {}) {
   const paras = String(text).split("\n").map((line) => new Paragraph({
@@ -65,7 +77,7 @@ function cell(text, width, { header = false, fill = null, bold = false } = {}) {
   });
 }
 
-function table(headers, rows, widths) {
+function dxTable(headers, rows, widths) {
   const sum = widths.reduce((a, b) => a + b, 0);
   return new Table({
     width: { size: sum, type: WidthType.DXA }, columnWidths: widths,
@@ -77,7 +89,7 @@ function table(headers, rows, widths) {
 }
 
 // Szare pole z przykładem liczbowym
-function example(lines) {
+function dxExample(lines) {
   return new Table({
     width: { size: CONTENT_W, type: WidthType.DXA }, columnWidths: [CONTENT_W],
     rows: [new TableRow({ children: [new TableCell({
@@ -93,7 +105,6 @@ function example(lines) {
   });
 }
 
-const SPACER = () => new Paragraph({ children: [], spacing: { after: 60 } });
 
 // ── Karta metryki ─────────────────────────────────────────────────────────────
 function metric(m) {
@@ -607,7 +618,7 @@ const QUICK = [
   ["embedding_separation_auc", "Zgodność embeddingu z werdyktami sędziego", "↑", "0.962"],
 ];
 
-function quickTable() {
+function dxQuickTable() {
   const w = [3300, 3560, 1150, 1350];
   const rows = QUICK.map(([a, b, c, d]) => {
     if (!b) {
@@ -626,20 +637,23 @@ function quickTable() {
   });
 }
 
+const TITLE = {
+  name: "EQD-AI",
+  title: "Referencja metryk jakości",
+  sub: "Warstwa ekstrakcji dowodów (L0 + L1)",
+  meta: "v3.0 | wrzesień 2026 | stan kodu: pipeline v2-p0 | 20 metryk w 6 grupach",
+  intro: [
+    "Dokument opisuje wszystkie metryki, które pipeline EQD-AI liczy po każdym runie. Dla każdej metryki podaje: definicję prostym językiem, wzór, kierunek interpretacji, moment i miejsce obliczania, zastosowanie, wskazówki do czytania wyników oraz przykład liczbowy. Tam, gdzie to możliwe, podajemy też wartość z runu referencyjnego.",
+    `Run referencyjny: ${REF}.`,
+  ],
+  note: "Poprzednia wersja (v2.0, luty 2026, 17 metryk pipeline’u v1) jest dostępna w historii gita; metryki wycofane w v2 wymienia Aneks A.",
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 const children = [
-  // Strona tytułowa
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 2400, after: 120 }, children: [TR({ text: "EQD-AI", bold: true, size: 56, color: BLUE })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [TR({ text: "Referencja metryk jakości", size: 36 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [TR({ text: "Warstwa ekstrakcji dowodów (L0 + L1)", italics: true, size: 24 })] }),
-  new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 600 }, children: [TR({ text: "v3.0 | wrzesień 2026 | stan kodu: pipeline v2-p0 | 20 metryk w 6 grupach", color: GREY, size: 20 })] }),
-  P("Dokument opisuje wszystkie metryki, które pipeline EQD-AI liczy po każdym runie. Dla każdej metryki podaje: definicję prostym językiem, wzór, kierunek interpretacji, moment i miejsce obliczania, zastosowanie, wskazówki do czytania wyników oraz przykład liczbowy. Tam, gdzie to możliwe, podajemy też wartość z runu referencyjnego.", { alignment: AlignmentType.CENTER }),
-  P(`Run referencyjny: ${REF}.`, { alignment: AlignmentType.CENTER }),
-  new Paragraph({ children: [TR({ text: "Poprzednia wersja (v2.0, luty 2026, 17 metryk pipeline’u v1) jest dostępna w historii gita; metryki wycofane w v2 wymienia Aneks A.", color: GREY, size: 18 })], alignment: AlignmentType.CENTER }),
+  { k: "title" },
   BREAK(),
-
-  new Paragraph({ heading: HeadingLevel.HEADING_1, children: [TR("Spis treści")] }),
-  new TableOfContents("Spis treści", { hyperlink: true, headingStyleRange: "1-2" }),
+  TOC(),
   BREAK(),
 
   // Wprowadzenie
@@ -763,6 +777,97 @@ const children = [
   ], [3400, CONTENT_W - 3400]),
 ];
 
+function renderDocx(b) {
+  const C = AlignmentType.CENTER;
+  switch (b.k) {
+    case "title": return [
+      new Paragraph({ alignment: C, spacing: { before: 2400, after: 120 }, children: [TR({ text: TITLE.name, bold: true, size: 56, color: BLUE })] }),
+      new Paragraph({ alignment: C, spacing: { after: 120 }, children: [TR({ text: TITLE.title, size: 36 })] }),
+      new Paragraph({ alignment: C, spacing: { after: 120 }, children: [TR({ text: TITLE.sub, italics: true, size: 24 })] }),
+      new Paragraph({ alignment: C, spacing: { after: 600 }, children: [TR({ text: TITLE.meta, color: GREY, size: 20 })] }),
+      ...TITLE.intro.map((t) => dxP(t, { alignment: C })),
+      new Paragraph({ children: [TR({ text: TITLE.note, color: GREY, size: 18 })], alignment: C }),
+    ];
+    case "toc": return [
+      new Paragraph({ heading: HeadingLevel.HEADING_1, children: [TR("Spis treści")] }),
+      new TableOfContents("Spis treści", { hyperlink: true, headingStyleRange: "1-2" }),
+    ];
+    case "h1": return [new Paragraph({ heading: HeadingLevel.HEADING_1, children: [TR(b.t)] })];
+    case "h2": return [new Paragraph({ heading: HeadingLevel.HEADING_2, children: [TR(b.t)] })];
+    case "h3": return [new Paragraph({ heading: HeadingLevel.HEADING_3, children: [TR(b.t)] })];
+    case "p": return [dxP(b.t, b.opts)];
+    case "label": return [new Paragraph({ children: [TR({ text: b.t, bold: true, color: BLUE })], spacing: { before: 160, after: 60 } })];
+    case "bul": return [new Paragraph({ numbering: { reference: "bullets", level: 0 }, children: runs(b.t), spacing: { after: 60 } })];
+    case "break": return [new Paragraph({ children: [new PageBreak()] })];
+    case "spacer": return [new Paragraph({ children: [], spacing: { after: 60 } })];
+    case "table": return [dxTable(b.headers, b.rows, b.widths)];
+    case "ex": return [dxExample(b.lines)];
+    case "quick": return [dxQuickTable()];
+    default: throw new Error(`unknown block ${b.k}`);
+  }
+}
+
+// ── Markdown rendering ──────────────────────────────────────────────────────
+// Headings shift one level down (# is the document title). Inline **bold** and
+// `code` markup is already Markdown.
+const mdCell = (t) => String(t).replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+const mdRow = (cells) => `| ${cells.map(mdCell).join(" | ")} |`;
+// GitHub heading anchor: lowercase, drop punctuation, spaces → hyphens.
+const mdSlug = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/ /g, "-");
+
+function mdTable(headers, rows) {
+  // Header-less fact tables get a "Pole | Opis" header (Markdown requires one).
+  const h = headers || ["Pole", "Opis"];
+  const body = headers ? rows : rows.map(([a, ...rest]) => [`**${a}**`, ...rest]);
+  return [mdRow(h), mdRow(h.map(() => "---")), ...body.map(mdRow)].join("\n");
+}
+
+function renderMd(b, all) {
+  switch (b.k) {
+    case "title": return [
+      `# ${TITLE.name} — ${TITLE.title}`,
+      `*${TITLE.sub}*`,
+      TITLE.meta,
+      "> Plik generowany przez `scripts/build_metrics_reference.js` (razem z wersją .docx) — nie edytuj go ręcznie.",
+      ...TITLE.intro,
+      `*${TITLE.note}*`,
+    ].join("\n\n");
+    case "toc": return ["## Spis treści", all
+      .filter((x) => x.k === "h1" || x.k === "h2")
+      .map((x) => `${x.k === "h2" ? "  " : ""}- [${x.t}](#${mdSlug(x.t)})`).join("\n")].join("\n\n");
+    case "h1": return `## ${b.t}`;
+    case "h2": return `### ${b.t}`;
+    case "h3": return `#### ${b.t}`;
+    case "p": return b.t;
+    case "label": return `**${b.t}**`;
+    case "bul": return `- ${b.t}`;
+    case "break": return "---";
+    case "spacer": return null;
+    case "table": return mdTable(b.headers, b.rows);
+    case "ex": return ["> **Przykład**", ...b.lines.map((l) => `>\n> ${l}`)].join("\n");
+    case "quick": {
+      const h = ["Metryka", "Co mierzy", "Kierunek", "Run ref."];
+      const rows = QUICK.map(([a, ...r]) => (r[0] ? [`**${a}**`, ...r] : [`*${a}*`, "", "", ""]));
+      return mdTable(h, rows);
+    }
+    default: throw new Error(`unknown block ${b.k}`);
+  }
+}
+
+function toMarkdown(blocks) {
+  // Consecutive bullets form one list; everything else is separated by a blank line.
+  let out = "";
+  let prev = null;
+  for (const b of blocks) {
+    const md = renderMd(b, blocks);
+    if (md === null) continue;
+    out += prev === null ? "" : prev === "bul" && b.k === "bul" ? "\n" : "\n\n";
+    out += md;
+    prev = b.k;
+  }
+  return out.replace(/(\n---)+(?=\n)/g, "\n---") + "\n";
+}
+
 const doc = new Document({
   features: { updateFields: true },
   creator: "EQD-AI",
@@ -786,12 +891,14 @@ const doc = new Document({
       children: [TR({ text: "EQD-AI — Referencja metryk v3.0", italics: true, color: GREY, size: 16 })] })] }) },
     footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER,
       children: [TR({ children: ["Strona ", PageNumber.CURRENT, " z ", PageNumber.TOTAL_PAGES], color: GREY, size: 16 })] })] }) },
-    children,
+    children: children.flatMap(renderDocx),
   }],
 });
 
 const OUT = process.argv[2] || "docs/reference/EQD_AI_Metrics_Reference.docx";
+const OUT_MD = OUT.replace(/\.docx$/, "") + ".md";
 Packer.toBuffer(doc).then((buf) => {
   fs.writeFileSync(OUT, buf);
-  console.log("written", OUT);
+  fs.writeFileSync(OUT_MD, toMarkdown(children));
+  console.log("written", OUT, "and", OUT_MD);
 });
