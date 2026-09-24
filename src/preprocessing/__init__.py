@@ -22,6 +22,9 @@ from src.preprocessing.grounding import (
     compute_corpus_coverage,
     corpus_coverage_summary,
     GroundingReport,
+    DropClass,
+    QuoteMatch,
+    locate_quote,
 )
 
 __all__ = [
@@ -39,4 +42,7 @@ __all__ = [
     "compute_corpus_coverage",
     "corpus_coverage_summary",
     "GroundingReport",
+    "DropClass",
+    "QuoteMatch",
+    "locate_quote",
 ]

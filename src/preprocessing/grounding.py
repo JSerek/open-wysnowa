@@ -10,8 +10,11 @@ the quote is hallucinated or misaligned.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from enum import Enum
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from src.core.db import Database, InitialCodeRepo, SegmentRepo, VerbatimQuoteRepo
 from src.core.models import InitialCode, Segment, VerbatimQuote
@@ -42,6 +45,100 @@ def attempt_realign(quote: VerbatimQuote, canonical_text: str) -> Optional[Tuple
     if idx >= 0:
         return (idx, idx + len(quote.quote_text))
     return None
+
+
+# ── Quote Location (v2 hard gate + drop diagnostics) ─────────────────────────
+
+class DropClass(str, Enum):
+    """Why a quote failed the exact-match gate. Diagnostic only — never accepts."""
+    NORMALIZED_WS = "normalized_ws"      # found after whitespace/typographic normalization
+    CASE = "case"                        # ...and after lowercasing
+    ELLIPSIS_STITCH = "ellipsis_stitch"  # split on "..."/"…", every fragment found
+    UNMATCHED = "unmatched"              # paraphrase or fabrication — not distinguished
+
+
+@dataclass(frozen=True)
+class QuoteMatch:
+    """Result of locating one quote in a canonical text."""
+    span: Optional[Tuple[int, int]]      # None → dropped
+    n_occurrences: int                   # exact occurrences in canonical
+    resolution: Optional[str]            # "unique" | "first_free" | "first_fallback"
+    drop_class: Optional[DropClass]      # set only when span is None
+
+
+_TYPOGRAPHIC = str.maketrans({
+    "‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"', "″": '"',
+    "–": "-", "—": "-", "−": "-",
+})
+_WS = re.compile(r"\s+")
+_ELLIPSIS = re.compile(r"\.{3,}")  # "…" becomes "..." under NFKC
+
+
+def _loose(text: str) -> str:
+    """NFKC + ASCII typography + collapsed whitespace (diagnostic comparison only)."""
+    text = unicodedata.normalize("NFKC", text).translate(_TYPOGRAPHIC)
+    return _WS.sub(" ", text).strip()
+
+
+def _occurrences(needle: str, haystack: str) -> List[int]:
+    """All start offsets of needle in haystack, overlapping occurrences included."""
+    out: List[int] = []
+    i = haystack.find(needle)
+    while i >= 0:
+        out.append(i)
+        i = haystack.find(needle, i + 1)
+    return out
+
+
+def _classify_drop(quote_text: str, canonical: str) -> DropClass:
+    """First matching class wins: normalized_ws → case → ellipsis_stitch → unmatched."""
+    q, c = _loose(quote_text), _loose(canonical)
+    if not q:
+        return DropClass.UNMATCHED
+    if q in c:
+        return DropClass.NORMALIZED_WS
+    ql, cl = q.lower(), c.lower()
+    if ql in cl:
+        return DropClass.CASE
+    if _ELLIPSIS.search(q):
+        fragments = [f.strip(" .") for f in _ELLIPSIS.split(ql)]
+        fragments = [f for f in fragments if f]
+        if fragments and all(f in cl for f in fragments):
+            return DropClass.ELLIPSIS_STITCH
+    return DropClass.UNMATCHED
+
+
+def locate_quote(
+    quote_text: str,
+    canonical: str,
+    claimed_spans: Sequence[Tuple[int, int]] = (),
+) -> QuoteMatch:
+    """
+    Locate a quote in canonical text under the v2 hard gate (contract #4).
+
+    Only an EXACT substring is accepted; the span is computed here, never by the
+    LLM. With several exact occurrences the first one not overlapping any
+    `claimed_spans` interval wins ("first_free"); if all overlap, the first one
+    ("first_fallback"). A non-matching quote gets a DropClass explaining the near
+    miss — the classification is diagnostic and never turns a drop into a match.
+    """
+    if not quote_text.strip():
+        return QuoteMatch(None, 0, None, DropClass.UNMATCHED)
+
+    starts = _occurrences(quote_text, canonical)
+    if not starts:
+        return QuoteMatch(None, 0, None, _classify_drop(quote_text, canonical))
+
+    length = len(quote_text)
+    if len(starts) == 1:
+        return QuoteMatch((starts[0], starts[0] + length), 1, "unique", None)
+
+    for s in starts:
+        e = s + length
+        if not any(max(s, cs) < min(e, ce) for cs, ce in claimed_spans):
+            return QuoteMatch((s, e), len(starts), "first_free", None)
+    return QuoteMatch((starts[0], starts[0] + length), len(starts), "first_fallback", None)
 
 
 # ── Grounding Report ─────────────────────────────────────────────────────────

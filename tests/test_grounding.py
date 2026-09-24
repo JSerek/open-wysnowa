@@ -218,3 +218,123 @@ class TestGroundingReport:
         )
         assert report.grounding_rate == 1.0
         assert report.is_acceptable is True
+
+
+# ── locate_quote (P0: hard gate + drop diagnostics + occurrence selection) ────
+
+from src.preprocessing import DropClass, QuoteMatch, locate_quote
+
+REVIEW = "The combat is sluggish and clunky. The story was fine. Loading times are far too long."
+DUP = "The combat is bad. The story was fine. The combat is bad. The combat is bad."
+
+
+class TestLocateQuoteAcceptance:
+    def test_unique_exact_match(self):
+        m = locate_quote("The story was fine", REVIEW)
+        s = REVIEW.index("The story was fine")
+        assert m.span == (s, s + len("The story was fine"))
+        assert m.n_occurrences == 1
+        assert m.resolution == "unique"
+        assert m.drop_class is None
+
+    def test_span_invariant_holds(self):
+        m = locate_quote("Loading times are far too long", REVIEW)
+        s, e = m.span
+        assert REVIEW[s:e] == "Loading times are far too long"
+
+    def test_duplicate_first_free_skips_claimed(self):
+        first = DUP.index("The combat is bad")
+        second = DUP.index("The combat is bad", first + 1)
+        m = locate_quote("The combat is bad", DUP, claimed_spans=[(first, first + 17)])
+        assert m.span == (second, second + 17)
+        assert m.n_occurrences == 3
+        assert m.resolution == "first_free"
+
+    def test_duplicate_unclaimed_takes_first_as_first_free(self):
+        m = locate_quote("The combat is bad", DUP)
+        assert m.span == (0, 17)
+        assert m.resolution == "first_free"
+
+    def test_three_occurrences_two_claimed_picks_third(self):
+        idx = [0]
+        while True:
+            nxt = DUP.find("The combat is bad", idx[-1] + 1)
+            if nxt < 0:
+                break
+            idx.append(nxt)
+        assert len(idx) == 3
+        claimed = [(idx[0], idx[0] + 17), (idx[1], idx[1] + 17)]
+        m = locate_quote("The combat is bad", DUP, claimed_spans=claimed)
+        assert m.span == (idx[2], idx[2] + 17)
+        assert m.resolution == "first_free"
+
+    def test_all_claimed_falls_back_to_first(self):
+        claimed = [(0, len(DUP))]
+        m = locate_quote("The combat is bad", DUP, claimed_spans=claimed)
+        assert m.span == (0, 17)
+        assert m.resolution == "first_fallback"
+
+    def test_claimed_spans_irrelevant_for_unique(self):
+        m = locate_quote("The story was fine", REVIEW, claimed_spans=[(0, len(REVIEW))])
+        assert m.resolution == "unique"
+
+
+class TestLocateQuoteDropClasses:
+    def test_whitespace_difference_is_normalized_ws(self):
+        m = locate_quote("The  combat is\nsluggish", REVIEW)
+        assert m.span is None
+        assert m.resolution is None
+        assert m.drop_class == DropClass.NORMALIZED_WS
+
+    def test_typographic_apostrophe_is_normalized_ws(self):
+        canonical = "I don't like the ending at all."
+        m = locate_quote("I don’t like the ending", canonical)
+        assert m.drop_class == DropClass.NORMALIZED_WS
+
+    def test_decomposed_diacritics_is_normalized_ws(self):
+        canonical = "Produkt jest świetny, ale dostawa trwała zbyt długo."
+        decomposed = "świetny"  # 's' + combining acute; NFKC → 'ś'
+        m = locate_quote(f"Produkt jest {decomposed}", canonical)
+        assert m.drop_class == DropClass.NORMALIZED_WS
+
+    def test_case_difference_is_case(self):
+        m = locate_quote("the combat is sluggish", REVIEW)
+        assert m.drop_class == DropClass.CASE
+
+    def test_ellipsis_stitch(self):
+        m = locate_quote("The combat is sluggish... Loading times are far too long", REVIEW)
+        assert m.drop_class == DropClass.ELLIPSIS_STITCH
+
+    def test_unicode_ellipsis_stitch(self):
+        m = locate_quote("The combat is sluggish… The story was fine", REVIEW)
+        assert m.drop_class == DropClass.ELLIPSIS_STITCH
+
+    def test_trailing_ellipsis_truncation_is_ellipsis_stitch(self):
+        m = locate_quote("The combat is sluggish...", REVIEW)
+        assert m.drop_class == DropClass.ELLIPSIS_STITCH
+
+    def test_case_wins_over_ellipsis(self):
+        canonical = "Wait... what? This ending is absurd."
+        m = locate_quote("wait... What?", canonical)
+        assert m.drop_class == DropClass.CASE
+
+    def test_ellipsis_with_missing_fragment_is_unmatched(self):
+        m = locate_quote("The combat is sluggish... the graphics are ugly", REVIEW)
+        assert m.drop_class == DropClass.UNMATCHED
+
+    def test_paraphrase_is_unmatched(self):
+        m = locate_quote("loading is way too slow", REVIEW)
+        assert m.drop_class == DropClass.UNMATCHED
+
+    def test_empty_quote_is_unmatched(self):
+        for q in ("", "   ", "\n"):
+            m = locate_quote(q, REVIEW)
+            assert m.span is None
+            assert m.n_occurrences == 0
+            assert m.drop_class == DropClass.UNMATCHED
+
+    def test_quote_match_is_frozen(self):
+        m = locate_quote("The story was fine", REVIEW)
+        assert isinstance(m, QuoteMatch)
+        with pytest.raises(Exception):
+            m.span = None  # type: ignore[misc]
