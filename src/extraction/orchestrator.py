@@ -17,7 +17,7 @@ import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.extraction.coder_agent import CoderAgent
+from src.extraction.coder_agent import CoderAgent, ground_candidate
 from src.extraction.codebook_comparator import CodebookComparator
 from src.extraction.second_pass_agent import SecondPassAgent
 from src.core.config import EQDConfig, ModelClient
@@ -509,7 +509,7 @@ class Layer1Orchestrator:
             for raw in (frag.recovered_evidence or []):
                 summary["pass2_stats"]["recovered_candidates"] += 1
                 # Grounding gate (Tier 1) — span via find(); hallucination → drop.
-                cand = CoderAgent._ground_candidate(raw, segment)
+                cand, _match = ground_candidate(raw, segment.canonical_text, pass1_spans)
                 if cand is None:
                     summary["pass2_stats"]["recovered_hallucinated"] += 1
                     if self.reasoning_logger:

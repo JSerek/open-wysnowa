@@ -365,6 +365,15 @@ class ICCandidate(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     sentiment: Optional[Sentiment] = Field(default=None)
     existing_code_match: Optional[str] = Field(default=None)
+    n_occurrences: int = Field(
+        default=1,
+        ge=1,
+        description="Exact occurrences of quote_text in canonical_text (diagnostic)",
+    )
+    occurrence_resolution: Optional[str] = Field(
+        default=None,
+        description="How the span was chosen: unique | first_free | first_fallback",
+    )
 
     @field_validator("span_end")
     @classmethod

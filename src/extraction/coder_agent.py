@@ -8,10 +8,11 @@ length), so the system computes the span deterministically by locating the quote
 in the canonical text.
 
 Grounding gate (v2 contract #4 — hard gate, no repair):
-    the quote must be an EXACT verbatim substring of canonical_text.
-    span_start = canonical_text.find(quote_text); if not found → the quote contains
-    hallucinated characters/words → candidate DROPPED (counted in
-    `last_drop_counts` → quote_hallucination_rate). No realignment, no fuzzy match.
+    the quote must be an EXACT verbatim substring of canonical_text. The span is
+    located by `src.preprocessing.locate_quote` (first free occurrence when the
+    phrase repeats). A non-verbatim quote is DROPPED; the drop is classified
+    (normalized_ws / case / ellipsis_stitch / unmatched) and exposed in
+    `last_drops` for the reasoning log. No realignment, no fuzzy acceptance.
 
 Pattern: instructor + Pydantic + tenacity retry.
 """
@@ -19,7 +20,8 @@ Pattern: instructor + Pydantic + tenacity retry.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -27,6 +29,7 @@ from src.core.config import EQDConfig, ModelClient
 from src.core.reasoning_log import ReasoningLogger
 from src.core.db import Database, InitialCodeRepo
 from src.core.models import ICCandidate, RawICCandidate, Segment, SegmentCodingResult
+from src.preprocessing.grounding import DropClass, QuoteMatch, locate_quote
 from src.extraction.prompts import (
     build_codebook_context,
     build_coder_system_prompt,
@@ -34,6 +37,44 @@ from src.extraction.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GroundingDrop:
+    """One candidate dropped by the grounding gate (full quote for the audit log)."""
+    ic_name: str
+    quote_text: str
+    drop_class: DropClass
+
+
+def ground_candidate(
+    raw: RawICCandidate,
+    canonical: str,
+    claimed_spans: Sequence[Tuple[int, int]] = (),
+) -> Tuple[Optional[ICCandidate], QuoteMatch]:
+    """
+    Ground a raw candidate against canonical text (shared by pass 1 and pass 2).
+
+    Returns (candidate, match). candidate is None when the quote is not an exact
+    substring; match.drop_class then says why. On success
+    canonical[span_start:span_end] == quote_text holds by construction.
+    """
+    match = locate_quote(raw.quote_text, canonical, claimed_spans)
+    if match.span is None:
+        return None, match
+    start, end = match.span
+    return ICCandidate(
+        ic_name=raw.ic_name,
+        definition=raw.definition,
+        quote_text=raw.quote_text,
+        span_start=start,
+        span_end=end,
+        confidence=raw.confidence,
+        sentiment=raw.sentiment,
+        existing_code_match=raw.existing_code_match,
+        n_occurrences=match.n_occurrences,
+        occurrence_resolution=match.resolution,
+    ), match
 
 
 class CoderAgent:
@@ -66,6 +107,9 @@ class CoderAgent:
         # Keyed by segment_id; value = number of candidates dropped because the
         # quote was not a verbatim substring (hallucinated text).
         self.last_drop_counts: Dict[str, int] = {}
+        # Full drop records from the most recent process_batch() call (for the
+        # reasoning log + drop-class metrics). Keyed by segment_id.
+        self.last_drops: Dict[str, List[GroundingDrop]] = {}
 
     def process_batch(self, segments: List[Segment]) -> Dict[str, List[ICCandidate]]:
         """
@@ -80,12 +124,14 @@ class CoderAgent:
 
         results: Dict[str, List[ICCandidate]] = {}
         self.last_drop_counts = {}  # reset for this batch
+        self.last_drops = {}
 
         for idx, segment in enumerate(segments, 1):
             logger.info(f"[CODER] Segment {idx}/{len(segments)}: {segment.id}")
-            candidates, n_dropped = self._code_segment(segment, codebook_context)
+            candidates, drops = self._code_segment(segment, codebook_context)
             results[segment.id] = candidates
-            self.last_drop_counts[segment.id] = n_dropped
+            self.last_drops[segment.id] = drops
+            self.last_drop_counts[segment.id] = len(drops)
 
         return results
 
@@ -93,7 +139,7 @@ class CoderAgent:
         self,
         segment: Segment,
         codebook_context: str,
-    ) -> Tuple[List[ICCandidate], int]:
+    ) -> Tuple[List[ICCandidate], List[GroundingDrop]]:
         """
         Process a single segment through the Coder Agent LLM.
 
@@ -102,7 +148,7 @@ class CoderAgent:
         3. Ground each quote: find it verbatim in canonical_text → compute span
         4. Drop candidates whose quote is not a verbatim substring (hallucination)
 
-        Returns (grounded_candidates, n_dropped).
+        Returns (grounded_candidates, drops).
         """
         system_prompt = build_coder_system_prompt(codebook_context)
         user_prompt = build_coder_user_prompt(segment.id, segment.canonical_text)
@@ -123,27 +169,32 @@ class CoderAgent:
             logger.error(
                 f"Coder Agent failed for segment {segment.id} after retries: {e}"
             )
-            return [], 0
+            return [], []
 
-        # Grounding gate — locate each quote verbatim; drop hallucinated ones
-        grounded = []
+        # Grounding gate — locate each quote verbatim; drop (and classify) the rest.
+        # Earlier accepted spans are "claimed" so a repeated phrase quoted by two
+        # candidates lands on two different occurrences.
+        grounded: List[ICCandidate] = []
+        drops: List[GroundingDrop] = []
+        claimed: List[Tuple[int, int]] = []
         for raw in result.candidates:
-            candidate = self._ground_candidate(raw, segment)
-            if candidate is not None:
-                grounded.append(candidate)
-            else:
+            candidate, match = ground_candidate(raw, segment.canonical_text, claimed)
+            if candidate is None:
+                drops.append(GroundingDrop(raw.ic_name, raw.quote_text, match.drop_class))
                 logger.warning(
-                    f"[HALLUCINATION] Dropped candidate '{raw.ic_name}' — "
-                    f"quote not found verbatim in segment {segment.id}. "
-                    f"Quote: '{raw.quote_text[:60]}…'"
+                    f"[HALLUCINATION] Dropped candidate '{raw.ic_name}' "
+                    f"({match.drop_class.value}) — quote not found verbatim in "
+                    f"segment {segment.id}. Quote: '{raw.quote_text[:60]}…'"
                 )
+                continue
+            grounded.append(candidate)
+            claimed.append((candidate.span_start, candidate.span_end))
 
-        n_dropped = len(result.candidates) - len(grounded)
         logger.info(
             f"Segment {segment.id}: {len(result.candidates)} candidates → "
-            f"{len(grounded)} grounded ({n_dropped} hallucinated)"
+            f"{len(grounded)} grounded ({len(drops)} hallucinated)"
         )
-        return grounded, n_dropped
+        return grounded, drops
 
     @retry(
         stop=stop_after_attempt(3),
@@ -180,43 +231,3 @@ class CoderAgent:
         if self.reasoning_logger:
             self.reasoning_logger.log("coder_agent", model_id, raw)
         return parsed
-
-    @staticmethod
-    def _ground_candidate(
-        raw: RawICCandidate, segment: Segment
-    ) -> Optional[ICCandidate]:
-        """
-        Ground a raw candidate by locating its quote verbatim in the canonical text.
-
-        The span is computed by the system (LLMs cannot count offsets). The only
-        check is the grounding gate (contract #4): the quote must be an EXACT
-        substring. If it is not found, the quote contains hallucinated
-        characters/words/sentences → return None (candidate dropped).
-
-        On a verbatim match, span_start/span_end are derived from the first
-        occurrence; the resulting ICCandidate satisfies
-        canonical_text[span_start:span_end] == quote_text by construction.
-        """
-        canonical = segment.canonical_text
-        quote = raw.quote_text
-
-        idx = canonical.find(quote)
-        if idx < 0:
-            return None  # not verbatim → hallucinated → dropped
-
-        if canonical.count(quote) > 1:
-            logger.debug(
-                f"Quote for '{raw.ic_name}' occurs {canonical.count(quote)}× in "
-                f"segment {segment.id}; grounding to first occurrence at {idx}."
-            )
-
-        return ICCandidate(
-            ic_name=raw.ic_name,
-            definition=raw.definition,
-            quote_text=quote,
-            span_start=idx,
-            span_end=idx + len(quote),
-            confidence=raw.confidence,
-            sentiment=raw.sentiment,
-            existing_code_match=raw.existing_code_match,
-        )
