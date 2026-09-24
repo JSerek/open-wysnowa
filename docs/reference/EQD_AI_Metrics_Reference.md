@@ -762,6 +762,49 @@ Na ile podobieństwo z embeddingu zgadza się z decyzjami sędziego — bez usta
 | **Gdzie w kodzie** | `compute_embedding_separation_auc()`; pary zbiera `codebook_comparator.py` |
 | **Klucz** | leaderboard: `embedding_separation_auc`; w wyniku także `n_merge`, `n_new` |
 
+**Jak to się liczy — krok po kroku**
+
+**Krok 1. Zbieramy pary.** Dla każdego kandydata embedding liczy podobieństwo do wszystkich kodów w codebooku i bierzemy najwyższe (najbliższy kod). Niezależnie od tego sędzia wydaje werdykt. Z każdego kandydata powstaje jedna para:
+
+| Kandydat | Najbliższy kod | Cosinus | Werdykt |
+| --- | --- | --- | --- |
+| „Gra crashuje co godzinę” | „Częste crashe” | 0.82 | MERGE |
+| „Wysypuje się do pulpitu” | „Częste crashe” | 0.74 | MERGE |
+| „Spadki FPS w mieście” | „Słaba optymalizacja” | 0.61 | MERGE |
+| „Parkour jak w pierwszej części” | „Świetny parkour” | 0.70 | NEW |
+| „Za drogi DLC” | „Cena gry” | 0.55 | NEW |
+| „Nudna fabuła” | „Częste crashe” | 0.40 | NEW |
+
+**Krok 2. Dzielimy cosinusy na dwie grupy** według werdyktu: MERGE = 0.82, 0.74, 0.61; NEW = 0.70, 0.55, 0.40. Dobry embedding daje wysokie cosinusy tam, gdzie sędzia widzi duplikat, i niskie tam, gdzie widzi coś nowego.
+
+**Krok 3. Turniej „każdy z każdym”.** Każdy cosinus MERGE porównujemy z każdym cosinusem NEW. Jeśli MERGE jest wyższy, embedding „wygrywa” pojedynek (remis liczy się jako pół wygranej).
+
+| MERGE ↓ / NEW → | 0.70 | 0.55 | 0.40 | Wygrane |
+| --- | --- | --- | --- | --- |
+| **0.82** | wygrana | wygrana | wygrana | 3 |
+| **0.74** | wygrana | wygrana | wygrana | 3 |
+| **0.61** | przegrana | wygrana | wygrana | 2 |
+
+Pojedynków jest 3 × 3 = 9, wygranych 8 → **AUC = 8/9 = 0.89**. Czyli: jeśli wylosujemy jeden przypadek MERGE i jeden NEW, w 89% sytuacji embedding da wyższe podobieństwo temu, który sędzia uznał za duplikat. Jedyna porażka: „Spadki FPS” (duplikat, 0.61) wyglądają dla embeddingu na mniej podobne niż „Parkour jak w pierwszej części” (nowy kod, 0.70).
+
+**Krok 4. Jak robi to kod: rangi zamiast turnieju.** Przy setkach par turniej byłby kosztowny, więc kod liczy ten sam wynik statystyką U Manna-Whitneya. Sortuje wszystkie cosinusy rosnąco i nadaje im rangi:
+
+| Cosinus | 0.40 | 0.55 | 0.61 | 0.70 | 0.74 | 0.82 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Werdykt | NEW | NEW | MERGE | NEW | MERGE | MERGE |
+| Ranga | 1 | 2 | **3** | 4 | **5** | **6** |
+
+- Suma rang MERGE: R = 3 + 5 + 6 = 14.
+- Odejmujemy najmniejszą możliwą sumę (gdyby wszystkie MERGE były na samym dole): 1 + 2 + 3 = n(n+1)/2 = 6.
+- U = 14 − 6 = 8 — dokładnie liczba wygranych z turnieju, bo ranga każdego MERGE mówi, ilu przeciwników jest pod nim.
+- AUC = U / (n_MERGE × n_NEW) = 8 / 9 = 0.89.
+
+**Remisy:** wartości równe dostają średnią rangę (np. pozycje 3 i 4 → obie 3.5), co automatycznie liczy remis jako pół wygranej.
+
+**Dlaczego bez progu:** podejście progowe („cosinus > 0.65 → MERGE”) daje wynik zależny od arbitralnie wybranego progu. AUC sprawdza tylko kolejność (czy duplikaty są wyżej niż nowe kody), co odpowiada polu pod krzywą ROC, czyli podsumowaniu wszystkich możliwych progów naraz.
+
+**Dlaczego sędzia jest sim-blind:** gdyby w pomiarze widział cosinusy, mógłby się nimi sugerować, a AUC mierzyłoby wtedy, jak bardzo sędzia słucha embeddingu. Bez liczb jego werdykt jest niezależnym punktem odniesienia.
+
 **Do czego służy**
 
 - Ocena modelu embeddingowego bez progów: czy jego ranking podobieństw odpowiada temu, co sędzia uznaje za ten sam kod.
@@ -777,12 +820,14 @@ Na ile podobieństwo z embeddingu zgadza się z decyzjami sędziego — bez usta
 
 - Zawsze sprawdź `n_merge` i `n_new`: przy kilku parach w jednej z klas wynik jest niestabilny.
 - AUC mierzy zgodność embeddingu z sędzią, a nie z „prawdą”. Słaby sędzia zaniży AUC nawet dobrego embeddingu.
+- AUC < 0.5 oznacza odwrócony sygnał (duplikaty wyglądają na mniej podobne niż nowe kody) — w praktyce błąd, a nie cecha embeddingu.
+- Liczy się tylko najwyższy cosinus: AUC sprawdza, czy embedding wyczuwa, że jakiś podobny kod istnieje, a nie czy sędzia połączył kandydata akurat z kodem nr 1 na shortliście.
 
 > **Przykład**
 >
-> Cosinusy dla MERGE: 0.82, 0.74, 0.61. Dla NEW: 0.70, 0.55, 0.40. Porównujemy wszystkie 3 × 3 = 9 par: 0.82 wygrywa z 3, 0.74 z 3, 0.61 z 2 (przegrywa z 0.70).
+> Przykład z remisem. MERGE: 0.80, 0.65. NEW: 0.65, 0.50. Pojedynki: 0.80 wygrywa z obiema wartościami NEW (2), 0.65 remisuje z 0.65 (0.5) i wygrywa z 0.50 (1) → 3.5 wygranej na 4 pojedynki.
 >
-> AUC = 8/9 = **0.89**.
+> Rangami: 0.50 → 1, obie 0.65 → (2 + 3)/2 = 2.5, 0.80 → 4. R = 2.5 + 4 = 6.5; U = 6.5 − 3 = 3.5; AUC = 3.5/4 = **0.875**.
 
 **W runie referencyjnym:** 0.962 (sd 0.010).
 
