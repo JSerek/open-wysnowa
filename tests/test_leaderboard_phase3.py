@@ -256,6 +256,34 @@ class TestReport:
             {"columns": [], "directions": {}, "cells": {}}
         )
 
+    def test_markdown_flags_judge_failures(self):
+        matrix = {
+            "columns": ["A×X", "B×X"],
+            "directions": {"judge_failure_rate": "less", "merge_rate": ""},
+            "cells": {
+                "judge_failure_rate": {"A×X": [0.0], "B×X": [0.0, 0.05]},
+                "merge_rate": {"A×X": [0.2], "B×X": [0.3]},
+            },
+            "pipeline_version": "v2-p0",
+            "excluded_runs": 3,
+        }
+        md = render_matrix_markdown(matrix)
+        header = md.splitlines()[2]
+        assert "B×X ⚠" in header
+        assert "A×X ⚠" not in header
+        assert "v2-p0" in md and "3" in md.splitlines()[0]
+        assert "judge_failure_rate > 0" in md
+
+    def test_markdown_without_version_has_no_header_line(self):
+        matrix = {
+            "columns": ["A×X"],
+            "directions": {"merge_rate": ""},
+            "cells": {"merge_rate": {"A×X": [0.2]}},
+        }
+        md = render_matrix_markdown(matrix)
+        assert md.startswith("| Metric")
+        assert "⚠" not in md
+
     def test_csv_has_mean_and_sd_columns(self):
         matrix = {
             "columns": ["model-A×embed-X"],

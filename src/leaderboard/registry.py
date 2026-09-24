@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-PIPELINE_VERSION = "v2-phase2"
+# Bumped for the P0 measurement-integrity fixes: runs before this version carry
+# merge-to-top-1 and silent judge-failure NEWs, so they are not averaged with
+# newer runs (load_matrix filters on this by default).
+PIPELINE_VERSION = "v2-p0"
 
 
 # ── Manifest ──────────────────────────────────────────────────────────────────
@@ -181,33 +184,52 @@ class RunRegistry:
         d["config_snapshot"] = json.loads(d.get("config_snapshot") or "{}")
         return d
 
-    def load_matrix(self) -> Dict[str, Any]:
+    def load_matrix(
+        self, pipeline_version: Optional[str] = PIPELINE_VERSION
+    ) -> Dict[str, Any]:
         """
         Pivot run_metrics into a metric × (gen_model × embed_model) matrix.
+
+        Only runs of `pipeline_version` are included (default: the current one), so
+        runs from older, differently-behaving pipelines are never averaged into the
+        same cell. pipeline_version=None includes every run.
 
         Returns:
             {
                 "columns": [ "<gen>×<embed>", ... ],   # one per model combo
                 "directions": { metric_name: direction },
                 "cells": { metric_name: { column: [values across runs/k] } },
+                "pipeline_version": str | None,
+                "excluded_runs": int,   # runs of other versions left out
             }
 
         Aggregation (mean ± sd across k>1) is left to the report layer (Phase 3);
         here we collect the raw values per (metric, column).
         """
+        query = """
+            SELECT r.generation_model_id AS gen,
+                   r.embedding_model_id  AS emb,
+                   m.metric_name         AS metric,
+                   m.value               AS value,
+                   m.direction           AS direction
+            FROM run_metrics m
+            JOIN runs r ON r.run_id = m.run_id
+        """
+        params: tuple = ()
+        if pipeline_version is not None:
+            query += " WHERE r.pipeline_version = ?"
+            params = (pipeline_version,)
+
         conn = self._connect()
         try:
-            rows = conn.execute(
-                """
-                SELECT r.generation_model_id AS gen,
-                       r.embedding_model_id  AS emb,
-                       m.metric_name         AS metric,
-                       m.value               AS value,
-                       m.direction           AS direction
-                FROM run_metrics m
-                JOIN runs r ON r.run_id = m.run_id
-                """
-            ).fetchall()
+            rows = conn.execute(query, params).fetchall()
+            if pipeline_version is None:
+                excluded = 0
+            else:
+                excluded = conn.execute(
+                    "SELECT COUNT(*) FROM runs WHERE pipeline_version IS NOT ?",
+                    (pipeline_version,),
+                ).fetchone()[0]
         finally:
             conn.close()
 
@@ -223,4 +245,10 @@ class RunRegistry:
             directions.setdefault(metric, row["direction"] or "")
             cells.setdefault(metric, {}).setdefault(col, []).append(row["value"])
 
-        return {"columns": columns, "directions": directions, "cells": cells}
+        return {
+            "columns": columns,
+            "directions": directions,
+            "cells": cells,
+            "pipeline_version": pipeline_version,
+            "excluded_runs": int(excluded),
+        }

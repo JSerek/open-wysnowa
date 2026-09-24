@@ -55,12 +55,23 @@ def _ordered(matrix: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     return metrics, columns
 
 
+_JUDGE_FAILURE_METRIC = "judge_failure_rate"
+
+
+def _judge_failure_columns(matrix: Dict[str, Any]) -> set:
+    """Columns where any run reported judge failures (results unreliable)."""
+    per_col = matrix.get("cells", {}).get(_JUDGE_FAILURE_METRIC, {})
+    return {col for col, values in per_col.items() if any(v > 0 for v in values)}
+
+
 def render_matrix_markdown(matrix: Dict[str, Any]) -> str:
     """
     Render the pivot as a GitHub-flavoured Markdown table.
 
     matrix is the dict returned by `RunRegistry.load_matrix()`:
-        {"columns": [...], "directions": {metric: dir}, "cells": {metric: {col: [v]}}}
+        {"columns": [...], "directions": {metric: dir}, "cells": {metric: {col: [v]}},
+         "pipeline_version": str | None, "excluded_runs": int}
+    Columns with judge_failure_rate > 0 in any run are marked ⚠ (P0).
     """
     metrics, columns = _ordered(matrix)
     directions = matrix.get("directions", {})
@@ -69,17 +80,29 @@ def render_matrix_markdown(matrix: Dict[str, Any]) -> str:
     if not metrics:
         return "_(no metrics recorded)_"
 
-    header = ["Metric", *columns]
-    lines = [
-        "| " + " | ".join(header) + " |",
-        "| " + " | ".join(["---"] * len(header)) + " |",
-    ]
+    flagged = _judge_failure_columns(matrix)
+    header = ["Metric", *[f"{c} ⚠" if c in flagged else c for c in columns]]
+    lines: List[str] = []
+    if matrix.get("pipeline_version"):
+        lines.append(
+            f"_pipeline_version: {matrix['pipeline_version']} — "
+            f"{matrix.get('excluded_runs', 0)} run(s) of other versions excluded_"
+        )
+        lines.append("")
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("| " + " | ".join(["---"] * len(header)) + " |")
     for metric in metrics:
         row = [_metric_label(metric, directions.get(metric, ""))]
         col_cells = cells.get(metric, {})
         for col in columns:
             row.append(_fmt_cell(aggregate_cell(col_cells.get(col, []))))
         lines.append("| " + " | ".join(row) + " |")
+    if flagged:
+        lines.append("")
+        lines.append(
+            "⚠ judge_failure_rate > 0 in at least one run of this column — "
+            "judge fell back to NEW; results are unreliable."
+        )
     return "\n".join(lines)
 
 

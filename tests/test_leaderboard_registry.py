@@ -67,3 +67,32 @@ class TestRunRegistry:
 
     def test_get_missing_run_returns_none(self, registry):
         assert registry.get_run("nope") is None
+
+    def test_matrix_filters_to_current_version(self, registry):
+        from src.leaderboard.registry import PIPELINE_VERSION
+        old = _manifest(run_id="run_old", gen="gen-a")
+        old.pipeline_version = "v2-phase2"
+        registry.register_run(old)
+        registry.register_run(_manifest(run_id="run_new", gen="gen-a"))
+        registry.record_metrics("run_old", {"merge_rate": 0.9})
+        registry.record_metrics("run_new", {"merge_rate": 0.1})
+
+        matrix = registry.load_matrix()
+        assert PIPELINE_VERSION == "v2-p0"
+        assert matrix["pipeline_version"] == "v2-p0"
+        assert matrix["cells"]["merge_rate"]["gen-a×emb-a"] == [0.1]
+        assert matrix["excluded_runs"] == 1
+
+        everything = registry.load_matrix(pipeline_version=None)
+        assert sorted(everything["cells"]["merge_rate"]["gen-a×emb-a"]) == [0.1, 0.9]
+        assert everything["excluded_runs"] == 0
+        assert everything["pipeline_version"] is None
+
+    def test_empty_version_rows_are_excluded(self, registry):
+        legacy = _manifest(run_id="run_legacy")
+        legacy.pipeline_version = ""
+        registry.register_run(legacy)
+        registry.record_metrics("run_legacy", {"merge_rate": 0.5})
+        matrix = registry.load_matrix()
+        assert matrix["cells"] == {}
+        assert matrix["excluded_runs"] == 1
