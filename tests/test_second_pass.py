@@ -181,6 +181,7 @@ class TestPass2Integration:
         o = Layer1Orchestrator(MagicMock(), db, config)
         o.coder_agent = MagicMock()
         o.coder_agent.last_drop_counts = {}
+        o.coder_agent.last_drops = {}
         o.comparator = MagicMock()
         o.second_pass_agent = MagicMock()
         o.embedding_service = MagicMock()
@@ -323,3 +324,70 @@ class TestPass2Integration:
         assert ps["recovered_candidates"] == 1
         assert ps["recovered_hallucinated"] == 1
         assert ps["recovered_accepted"] == 0
+        assert ps["drop_classes"] == {"unmatched": 1}
+
+    def test_pass2_hits_second_occurrence_instead_of_overlap_drop(self, db):
+        """A repeated phrase recovered in pass 2 lands on the free occurrence."""
+        text = "The combat is bad. The story was fine. The combat is bad."
+        seg = Segment(
+            id="seg_dup2", document_id="doc_dup2", canonical_text=text,
+            original_text=text, char_count=len(text), segment_index=0,
+            content_hash="hash_dup2",
+        )
+        DocumentRepo(db).insert(Document(id="doc_dup2", raw_text="x"))
+        SegmentRepo(db).insert(seg)
+
+        config = MagicMock()
+        config.processing.batch_size = 15
+        config.processing.its_saturation_threshold = 0.02
+        config.processing.its_consecutive_batches = 3
+        config.processing.similarity_prefilter_k = 5
+        o = Layer1Orchestrator(MagicMock(), db, config)
+        o.coder_agent = MagicMock()
+        o.coder_agent.last_drop_counts = {}
+        o.coder_agent.last_drops = {}
+        o.comparator = MagicMock()
+        o.second_pass_agent = MagicMock()
+        o.embedding_service = MagicMock()
+        o.embedding_service.embed_texts_batch.side_effect = (
+            lambda texts: [[0.1, 0.2, 0.3] for _ in texts]
+        )
+
+        def fake_embed_ic(ic):
+            ic.embedding_json = [0.1, 0.2, 0.3]
+            return ic
+        o.embedding_service.embed_ic.side_effect = fake_embed_ic
+        o.comparator.evaluate.return_value = (
+            ComparatorOutput(recommendation=ComparatorRecommendation.NEW,
+                             reasoning="Distinct concept."),
+            [],
+            {"decision_path": "empty_codebook", "max_sim": None, "llm_recommendation": None},
+        )
+
+        o.coder_agent.process_batch.return_value = {seg.id: [ICCandidate(
+            ic_name="combat_bad", definition="Player criticises the combat",
+            quote_text="The combat is bad", span_start=0, span_end=17,
+            confidence=0.9, n_occurrences=2, occurrence_resolution="first_free",
+        )]}
+        o.second_pass_agent.assess_omitted.return_value = SecondPassResult(
+            segment_id=seg.id,
+            fragments=[OmittedFragmentAssessment(
+                omitted_text="The combat is bad.",
+                reasoning="Repeated complaint at the end of the review.",
+                omission_type=OmissionType.ACCIDENTAL,
+                contains_evidence=True,
+                recovered_evidence=[RawICCandidate(
+                    ic_name="combat_bad_repeat",
+                    definition="Player repeats the combat complaint",
+                    quote_text="The combat is bad", confidence=0.8,
+                )],
+            )],
+        )
+
+        result = o.run([seg], enable_hil=False)
+
+        ps = result["pass2_stats"]
+        assert ps["overlap_drops"] == 0
+        assert ps["recovered_accepted"] == 1
+        assert result["ambiguous_occurrences"] == {"first_free": 2, "first_fallback": 0}
+        assert result["accepted_quotes_total"] == 2

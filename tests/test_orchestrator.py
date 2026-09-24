@@ -13,6 +13,8 @@ from src.core.models import (
     SegmentCodingResult,
 )
 from src.extraction.orchestrator import ITSTracker, Layer1Orchestrator
+from src.extraction.coder_agent import GroundingDrop
+from src.preprocessing import DropClass
 
 
 # ── ITS Tracker Tests ────────────────────────────────────────────────────────
@@ -126,6 +128,8 @@ class TestLayer1Orchestrator:
 
         # Replace sub-components with mocks
         orch.coder_agent = MagicMock()
+        orch.coder_agent.last_drop_counts = {}
+        orch.coder_agent.last_drops = {}
         orch.comparator = MagicMock()
         orch.embedding_service = MagicMock()
         # Pass-2 audit mocked to a no-op (these tests exercise the pass-1 track).
@@ -263,3 +267,55 @@ class TestLayer1Orchestrator:
 
         assert result["rejected"] == 1
         assert result["new_ics_created"] == 0
+
+    def test_pass1_drops_logged_and_classified(self, mock_orchestrator, test_segment):
+        """Every pass-1 grounding drop becomes a full reasoning-log record + class count."""
+        mock_orchestrator.coder_agent.process_batch.return_value = {test_segment.id: []}
+        mock_orchestrator.coder_agent.last_drop_counts = {test_segment.id: 2}
+        mock_orchestrator.coder_agent.last_drops = {test_segment.id: [
+            GroundingDrop("a", "Produkt jest świetny... zbyt długo", DropClass.ELLIPSIS_STITCH),
+            GroundingDrop("b", "zupełnie inny tekst", DropClass.UNMATCHED),
+        ]}
+        mock_orchestrator.reasoning_logger = MagicMock()
+
+        result = mock_orchestrator.run([test_segment], enable_hil=False)
+
+        assert result["grounding_drop_classes"] == {"ellipsis_stitch": 1, "unmatched": 1}
+        assert result["total_dropped"] == 2
+        records = [c.args[0] for c in mock_orchestrator.reasoning_logger.log_record.call_args_list]
+        drops = [r for r in records if r.get("type") == "grounding_drop"]
+        assert len(drops) == 2
+        assert drops[0] == {
+            "type": "grounding_drop", "pass": 1, "segment_id": test_segment.id,
+            "ic_name": "a", "quote_text": "Produkt jest świetny... zbyt długo",
+            "drop_class": "ellipsis_stitch", "grounded": False,
+            "final_action": "grounding_drop",
+        }
+
+    def test_candidate_record_carries_occurrence_fields(self, mock_orchestrator, test_segment):
+        canonical = test_segment.canonical_text
+        quote_text = "Produkt jest świetny"
+        start = canonical.index(quote_text)
+        mock_orchestrator.coder_agent.process_batch.return_value = {test_segment.id: [
+            ICCandidate(
+                ic_name="product_praise", definition="Praise for the product",
+                quote_text=quote_text, span_start=start,
+                span_end=start + len(quote_text), confidence=0.8,
+                n_occurrences=1, occurrence_resolution="unique",
+            )
+        ]}
+        mock_orchestrator.comparator.evaluate.return_value = (
+            ComparatorOutput(recommendation=ComparatorRecommendation.REJECT,
+                             reasoning="Too vague."),
+            [],
+            {"decision_path": "llm", "max_sim": 0.6, "llm_recommendation": "REJECT"},
+        )
+        mock_orchestrator.reasoning_logger = MagicMock()
+
+        result = mock_orchestrator.run([test_segment], enable_hil=False)
+
+        rec = mock_orchestrator.reasoning_logger.log_candidate.call_args.args[0]
+        assert rec["n_occurrences"] == 1
+        assert rec["occurrence_resolution"] == "unique"
+        assert result["accepted_quotes_total"] == 1
+        assert result["ambiguous_occurrences"] == {"first_free": 0, "first_fallback": 0}

@@ -260,6 +260,11 @@ class Layer1Orchestrator:
             # Span-error tracking (candidates failing the Tier 1 grounding gate)
             "total_dropped": 0,
             "dropped_per_segment": {},  # {segment_id: n_dropped}
+            # Grounding diagnostics (P0): why pass-1 quotes failed the exact gate,
+            # and how often a repeated phrase forced an occurrence choice.
+            "grounding_drop_classes": {},   # {drop_class: n}
+            "ambiguous_occurrences": {"first_free": 0, "first_fallback": 0},
+            "accepted_quotes_total": 0,     # candidates passing the gate (pass 1 + 2)
             # Coder confidence — collected for new ICs only (not merges or rejects)
             "new_ic_confidences": [],
             # IDs of new ICs whose coder confidence fell below 0.6 — surfaced at sign-off
@@ -287,6 +292,7 @@ class Layer1Orchestrator:
                 "recovered_candidates": 0,   # raw recovered before grounding
                 "recovered_hallucinated": 0, # dropped by the pass-2 grounding gate
                 "overlap_drops": 0,          # dropped by the DEDUP-overlap gate
+                "drop_classes": {},          # {drop_class: n} for pass-2 grounding drops
                 "recovered_accepted": 0,     # passed the judge (NEW or MERGE)
             },
         }
@@ -451,6 +457,19 @@ class Layer1Orchestrator:
             summary["dropped_per_segment"].get(seg_id, 0) + n_dropped
         )
         summary["total_candidates"] += len(pass1_cands)
+        for drop in self.coder_agent.last_drops.get(seg_id, []):
+            cls = drop.drop_class.value
+            classes = summary["grounding_drop_classes"]
+            classes[cls] = classes.get(cls, 0) + 1
+            if self.reasoning_logger:
+                self.reasoning_logger.log_record({
+                    "type": "grounding_drop", "pass": 1, "segment_id": seg_id,
+                    "ic_name": drop.ic_name, "quote_text": drop.quote_text,
+                    "drop_class": cls, "grounded": False,
+                    "final_action": "grounding_drop",
+                })
+        for cand in pass1_cands:
+            self._count_accepted_quote(cand, summary)
 
         pass1_spans: List[Tuple[int, int]] = []
         pass1_embeddings = self._embed_candidates(pass1_cands)
@@ -508,19 +527,25 @@ class Layer1Orchestrator:
 
             for raw in (frag.recovered_evidence or []):
                 summary["pass2_stats"]["recovered_candidates"] += 1
-                # Grounding gate (Tier 1) — span via find(); hallucination → drop.
-                cand, _match = ground_candidate(raw, segment.canonical_text, pass1_spans)
+                # Grounding gate — exact match only; pass-1 spans are "claimed" so a
+                # repeated phrase recovered here lands on its free occurrence.
+                cand, match = ground_candidate(raw, segment.canonical_text, pass1_spans)
                 if cand is None:
+                    cls = match.drop_class.value
                     summary["pass2_stats"]["recovered_hallucinated"] += 1
+                    p2_classes = summary["pass2_stats"]["drop_classes"]
+                    p2_classes[cls] = p2_classes.get(cls, 0) + 1
                     if self.reasoning_logger:
                         self.reasoning_logger.log_record({
                             "type": "pass2_grounding_drop",
                             "pass": 2, "segment_id": seg_id,
                             "ic_name": raw.ic_name, "quote_text": raw.quote_text,
                             "omission_type": otype, "grounded": False,
+                            "drop_class": cls,
                             "final_action": "grounding_drop",
                         })
                     continue
+                self._count_accepted_quote(cand, summary)
                 # DEDUP overlap gate — drop if span overlaps any accepted pass-1 span.
                 if self._overlaps_any((cand.span_start, cand.span_end), pass1_spans):
                     summary["pass2_stats"]["overlap_drops"] += 1
@@ -689,6 +714,8 @@ class Layer1Orchestrator:
                 "quote_text": cand.quote_text,
                 "span_start": cand.span_start,
                 "span_end": cand.span_end,
+                "n_occurrences": cand.n_occurrences,
+                "occurrence_resolution": cand.occurrence_resolution,
                 "grounded": True,
                 "coder_existing_code_match": cand.existing_code_match,
                 "top_k": [
@@ -745,6 +772,13 @@ class Layer1Orchestrator:
         """True if `span` overlaps any interval in `others` (max(s,s1)<min(e,e1))."""
         s, e = span
         return any(max(s, s1) < min(e, e1) for s1, e1 in others)
+
+    @staticmethod
+    def _count_accepted_quote(cand: ICCandidate, summary: Dict[str, Any]) -> None:
+        """Count a gate-passing quote and whether its occurrence was ambiguous."""
+        summary["accepted_quotes_total"] += 1
+        if cand.occurrence_resolution in ("first_free", "first_fallback"):
+            summary["ambiguous_occurrences"][cand.occurrence_resolution] += 1
 
     # ── HIL Interaction Loop ─────────────────────────────────────────────────
 
