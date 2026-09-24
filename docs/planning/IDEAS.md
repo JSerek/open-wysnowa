@@ -17,6 +17,23 @@ status tag:
 
 ---
 
+## v2 P0 — Measurement Integrity `[done]`
+
+**Origin:** research P0 #1–#3 (`docs/research/2026-09-llm-qda-landscape.md`) +
+review notes P0-1…P0-3. Done 2026-09-24, `PIPELINE_VERSION = "v2-p0"`.
+
+Judge failure status + `judge_failure_rate` (failed calls produce no AUC pairs);
+`--no-hil` honours the judge's `merge_target_name` (unresolved → NEW +
+`merge_target_unresolved_rate`); hard-gate grounding with drop classes
+(`normalized_ws` / `case` / `ellipsis_stitch` / `unmatched`) logged per quote;
+first-free occurrence for repeated phrases (`ambiguous_occurrence_rate`); hard
+`verify()` before any insert; `grounding` → `span_integrity` (sanity check);
+version-split leaderboard matrix. **Runs `v2-phase2` and older are biased —
+re-run before comparing.** Spec/plan:
+`docs/planning/P0_measurement_integrity_{design,plan}.md`.
+
+---
+
 ## v2 Phase 3 — Leaderboard Follow-ups
 
 **Origin:** Phase 3 leaderboard implementation (commit `39e47c8`) + the
@@ -254,7 +271,6 @@ methods (token capture), `EQDPipeline.run` (wall-clock), `pipeline._flatten_metr
 ---
 
 *Created: 2026-03-04*
-*Last updated: 2026-06-08 — Added "v2 Phase 3 — Leaderboard Follow-ups" section
-(8 entries across T1 trustworthiness / T2 missing axes / T3 hardening) from the
-canonical_top10 live smoke; extended Token Usage Tracking into a leaderboard
-cost/latency axis.*
+*Last updated: 2026-09-24 — Added "v2 P0 — Measurement Integrity" [done] entry
+(judge failure status, merge-target resolution, drop-class diagnostics,
+occurrence selection, v2-p0 version split).*

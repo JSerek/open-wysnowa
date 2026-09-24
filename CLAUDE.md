@@ -92,13 +92,21 @@ L2+ concerns and no longer apply on `main`.)
 ## L1 metrics (`src/eval/l1_metrics.py` — `L1MetricsEngine`)
 
 Reference-free signals, never gates:
-- **grounding** — quotes where `canonical_text[span]==quote_text` (deterministic)
+- **span_integrity** — sanity check: persisted quotes still satisfy `canonical_text[span]==quote_text`; 1.0 expected, < 1.0 = bug (renamed from `grounding`, which was 1.0 by construction)
+- **quote_hallucination_rate** + drop classes (`normalized_ws` / `case` / `ellipsis_stitch` / `unmatched`) and **unmatched_quote_rate** — raw, non-circular quote fidelity (hard gate, nothing repaired)
+- **judge_failure_rate**, **merge_target_unresolved_rate** — judge reliability; failed judge calls produce no AUC pair
+- **ambiguous_occurrence_rate** — accepted quotes whose phrase repeats in the review (span = first free occurrence)
 - **extraction_density** — per-segment char coverage via merged span-union
 - **candidate_drop_rate** — candidates rejected by 3-tier span validation
 - **ic_concentration** — singleton ratio
 - **merge_rate**, **triage_efficiency**, **comparator_agreement**
 - **coder_confidence**, **quote_coverage_per_ic**, **ITS** (passed in)
 - **cross_review_convergence** — judgment-call L1/L2 metric (kept; revisit scope)
+
+Leaderboard runs are tagged `pipeline_version`; `RunRegistry.load_matrix()` shows only
+the current version (`v2-p0`) by default. Runs before `v2-p0` are biased (merge to
+top-1 in `--no-hil`, judge failures counted as NEW + AUC pairs) — see
+`docs/planning/P0_measurement_integrity_design.md`.
 
 ---
 

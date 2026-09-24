@@ -1,7 +1,7 @@
 # EQD-AI v2 — P0: integralność pomiaru (spec projektowy)
 
-> **Status:** zatwierdzony projekt (sesja brainstormingowa 2026-09-24). Plan
-> implementacyjny powstaje na jego podstawie (writing-plans).
+> **Status:** ✅ zrealizowane (2026-09-24, `PIPELINE_VERSION = "v2-p0"`). Plan:
+> `docs/planning/P0_measurement_integrity_plan.md`.
 > **Źródła:** rekomendacje P0 #1–#3 z `docs/research/2026-09-llm-qda-landscape.md`
 > (§ rekomendacje), specyfikacje P0-1…P0-3 z
 > `notes/2026-06-09-propozycje-zmian-po-recenzji.md`.
