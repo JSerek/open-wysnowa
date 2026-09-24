@@ -284,6 +284,16 @@ class TestReport:
         assert md.startswith("| Metric")
         assert "⚠" not in md
 
+    def test_markdown_empty_matrix_still_reports_excluded_runs(self):
+        """All runs filtered out → the user still learns older runs were excluded."""
+        md = render_matrix_markdown({
+            "columns": [], "directions": {}, "cells": {},
+            "pipeline_version": "v2-p0", "excluded_runs": 4,
+        })
+        assert "no metrics" in md
+        assert "v2-p0" in md
+        assert "4 run(s) of other versions excluded" in md
+
     def test_csv_has_mean_and_sd_columns(self):
         matrix = {
             "columns": ["model-A×embed-X"],

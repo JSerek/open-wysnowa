@@ -77,11 +77,7 @@ def render_matrix_markdown(matrix: Dict[str, Any]) -> str:
     directions = matrix.get("directions", {})
     cells = matrix.get("cells", {})
 
-    if not metrics:
-        return "_(no metrics recorded)_"
-
-    flagged = _judge_failure_columns(matrix)
-    header = ["Metric", *[f"{c} ⚠" if c in flagged else c for c in columns]]
+    # Version header first — even an empty matrix must say older runs were filtered.
     lines: List[str] = []
     if matrix.get("pipeline_version"):
         lines.append(
@@ -89,6 +85,13 @@ def render_matrix_markdown(matrix: Dict[str, Any]) -> str:
             f"{matrix.get('excluded_runs', 0)} run(s) of other versions excluded_"
         )
         lines.append("")
+
+    if not metrics:
+        lines.append("_(no metrics recorded)_")
+        return "\n".join(lines)
+
+    flagged = _judge_failure_columns(matrix)
+    header = ["Metric", *[f"{c} ⚠" if c in flagged else c for c in columns]]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("| " + " | ".join(["---"] * len(header)) + " |")
     for metric in metrics:
